@@ -27,6 +27,7 @@ Concretely, what gets learned is a stack of matrices (`784→512`, `512→256`, 
 | `mlp.py` | 3-layer MLP: `Flatten → Linear → ReLU → Dropout → Linear → ReLU → Dropout → Linear` |
 | `train.py` | Downloads MNIST, trains, evaluates each epoch, saves weights |
 | `visualize.py` | Loads a checkpoint and plots first-layer weights reshaped to 28×28 |
+| `demo/` | Gradio webapp — draw a digit in the browser and see the model's prediction |
 
 ## Instructions
 
@@ -115,15 +116,23 @@ If you trained with non-default hidden sizes, pass them so the checkpoint loads 
 python visualize.py --ckpt mlp.pt --hidden 256 128 --save first_layer_weights.png
 ```
 
-## Flags
+### 5. Play with the model in the browser
 
-| Flag | Default | Notes |
-| --- | --- | --- |
-| `--optimizer {sgd,adam,adamw}` | `adam` | |
-| `--lr` | `1e-3` | SGD wants ~`0.05` |
-| `--epochs` | `10` | |
-| `--batch-size` | `128` | |
-| `--hidden H1 H2` | `512 256` | e.g. `--hidden 256 128` for a smaller net |
-| `--dropout` | `0.2` | |
-| `--save-path` | `mlp.pt` | |
-| `--seed` | `0` | |
+The `demo/` directory has a small Gradio webapp that loads `mlp.pt`, lets you draw a digit on a canvas, and shows the top-3 predicted classes live as you draw. It's a quick way to see how the model responds to your own handwriting (and how different it is from the clean MNIST distribution).
+
+Requires **Python 3.10 or newer** (Gradio 5 dropped 3.9 support). macOS's default `python3` is 3.9 — install a newer one via Homebrew if needed:
+
+```bash
+brew install python3
+```
+
+Then, from `lab1.1/demo/`:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
+
+Opens at http://127.0.0.1:7860. The preprocessing pipeline matches training: invert colors (MNIST is white-on-black), crop to the drawing's bounding box with a small margin (MNIST digits are centered and normalized in size), resize to 28×28, and normalize with the same `mean=0.1307`, `std=0.3081`. If your first attempts misclassify, try drawing in the center with moderate thickness and see how the probabilities shift.
+
