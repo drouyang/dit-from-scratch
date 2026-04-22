@@ -12,6 +12,10 @@
 
 **MNIST** is 70,000 28×28 grayscale images of handwritten digits 0–9 (60k train / 10k test). Each image is labeled with the digit it depicts.
 
+![MNIST digit samples — 16 examples per row, one row per digit class 0–9](https://upload.wikimedia.org/wikipedia/commons/2/27/MnistExamples.png)
+
+*Sample grid from [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:MnistExamples.png) (public domain). Each row shows 16 random examples of a single digit class, illustrating the within-class handwriting variation the model has to look past.*
+
 The task is **classification**: given the 784 pixel values, output a probability distribution over the 10 digit classes. The MLP learns a function `f: ℝ⁷⁸⁴ → ℝ¹⁰` (logits). Training minimizes **cross-entropy** between the softmax of those logits and the one-hot true label — equivalent to maximizing the log-probability the model assigns to the correct digit.
 
 Concretely, what gets learned is a stack of matrices (`784→512`, `512→256`, `256→10`) that together transform raw pixels into features discriminative enough to separate the ten digits. 98%+ accuracy on the test set means the model generalizes that mapping to handwriting it never saw during training.
