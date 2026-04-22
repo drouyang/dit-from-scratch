@@ -43,7 +43,9 @@ epoch  1 |   4.8s | train_loss 0.3412 | test_loss 0.1488 | test_acc 95.67%
 epoch 10 |   4.6s | train_loss 0.0612 | test_loss 0.0708 | test_acc 98.24%
 ```
 
-Watch `train_loss` drift below `test_loss` after epoch 5 — that's overfitting. Re-run with `--dropout 0.4` and see the gap shrink.
+Watch `train_loss` drift below `test_loss` after epoch 5 — that's overfitting.
+
+**Dropout** randomly zeros a fraction `p` of activations during `train()` mode (and rescales the rest by `1/(1-p)` so the expected sum stays the same). At `eval()` it's a no-op. The effect: the network can't rely on any single unit, so it learns more distributed, robust features — a cheap regularizer. Re-run with `--dropout 0.4` and watch the train/test loss gap shrink (at the cost of slower training-loss descent).
 
 ### 3. Swap optimizers
 
