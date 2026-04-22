@@ -6,7 +6,7 @@
 
 **Why this matters for DiT**: the FFN inside every transformer block is an MLP, AdaLN modulation is an MLP from the time embedding, and the sinusoidal timestep embedding is fed through an MLP. You will write this pattern dozens of times.
 
-**Deliverable**: `train.py` hitting 98%+ on MNIST, plus a one-paragraph "what clicked" note.
+**Deliverable**: `train.py` hitting 98%+ on MNIST.
 
 ## What the model learns
 
@@ -118,10 +118,6 @@ python visualize.py --ckpt mlp.pt --hidden 256 128 --save first_layer_weights.pn
 ### 5. Break train/eval mode
 
 Comment out `model.train()` and `model.eval()` in `train.py` and re-run. Dropout stays active at test time → test accuracy drops and gets noisy. (BatchNorm would break the same way via running-stats vs batch-stats.)
-
-### 6. Write your "what clicked" note
-
-One paragraph. What surprised you — e.g. how brittle SGD is without the right `lr`, how much dropout cleans up the filters, how the five-line training loop is really the whole game.
 
 ## Flags
 
