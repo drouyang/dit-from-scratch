@@ -75,13 +75,29 @@ python train.py --optimizer sgd --lr 0.05 --epochs 15
 
 ### 4. Visualize first-layer weights
 
+The full model is three `Linear` layers with ReLU + Dropout between them:
+
+```
+[28×28 image] → Flatten(784) → Linear(784→512) → ReLU → Dropout
+                             → Linear(512→256) → ReLU → Dropout
+                             → Linear(256→10)  → logits
+```
+
+**Why only the first layer?** Its weight matrix has shape `(512, 784)` — each of the 512 output units has a 784-dim weight vector that lives in the *same space as the input pixels*. Reshape that vector to 28×28 and you get a picture of the pattern that unit is looking for (its dot product with the image is maximal when the image matches). Layers 2 and 3 operate on hidden activations (512-dim, 256-dim), which have no spatial meaning — you can't reshape them back to an image.
+
+Run the visualizer:
+
 ```bash
 python visualize.py --ckpt mlp.pt --save first_layer_weights.png
 ```
 
-You get an 8×8 grid of 28×28 filters. Many should look like localized pen-stroke / edge detectors; some will look noisy — both expected. Higher-dropout checkpoints tend to look cleaner.
+You get an 8×8 grid (64 of the 512 units) reshaped to 28×28. Bright/dark pixels in a tile = positive/negative weights at that input location. What to look for:
 
-If you trained with non-default hidden sizes, pass them too:
+- **Localized blobs and oriented strokes** — units that respond to a specific pen-stroke position and angle. These are the "edge-detector"-like features deep nets are known for. The network re-uses them across all ten digit classes.
+- **Noisy / salt-and-pepper tiles** — dead or underutilized units. Expected; with 512 hidden units, MNIST doesn't need all of them.
+- **Higher-dropout checkpoints** tend to look cleaner and more structured: dropout forces each unit to be individually useful, which pushes weights away from the noisy regime.
+
+If you trained with non-default hidden sizes, pass them so the checkpoint loads correctly:
 
 ```bash
 python visualize.py --ckpt mlp.pt --hidden 256 128 --save first_layer_weights.png
