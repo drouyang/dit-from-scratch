@@ -2,6 +2,8 @@
 
 **Goal**: lock in the PyTorch training loop muscle memory.
 
+**Why this matters for DiT**: the FFN inside every transformer block is an MLP, AdaLN modulation is an MLP from the time embedding, and the sinusoidal timestep embedding is fed through an MLP. You will write this pattern dozens of times.
+
 ## Core intuitions
 
 - All of deep learning is elaborations on `Linear → nonlinearity → Linear → ...`
