@@ -1,8 +1,12 @@
 # Module 1.1 — MLP (Warm-up)
 
+> Part 1 — Building Blocks · First module of [DiT from Scratch](../README.md)
+
 **Goal**: lock in the PyTorch training loop muscle memory.
 
 **Why this matters for DiT**: the FFN inside every transformer block is an MLP, AdaLN modulation is an MLP from the time embedding, and the sinusoidal timestep embedding is fed through an MLP. You will write this pattern dozens of times.
+
+**Deliverable**: a working `train.py` run hitting 98%+ on MNIST, plus a one-paragraph "what clicked" note.
 
 ## Core intuitions
 
@@ -12,14 +16,16 @@
 
 ## Exercise
 
-- [ ] Train a 3-layer MLP on MNIST to 98%+ test accuracy
+- [ ] Train a 3-layer MLP on MNIST to 98%+ test accuracy (Part 1 milestone)
 - [ ] Swap optimizers (SGD, Adam, AdamW) and observe convergence differences
 - [ ] Visualize learned first-layer weights as 28×28 images — do they look like edge detectors?
+- [ ] Write a one-paragraph "what clicked" note
 
 ## References
 
 - PyTorch tutorials: "Learn the Basics"
 - Karpathy's "A Recipe for Training Neural Networks"
+- See the [Reference Library](../README.md#reference-library) in the top-level README for the rest of the curriculum reading list.
 
 ---
 
