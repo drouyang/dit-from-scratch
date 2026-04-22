@@ -45,7 +45,11 @@ epoch 10 |   4.6s | train_loss 0.0612 | test_loss 0.0708 | test_acc 98.24%
 
 Watch `train_loss` drift below `test_loss` after epoch 5 — that's overfitting.
 
-**Dropout** randomly zeros a fraction `p` of activations during `train()` mode (and rescales the rest by `1/(1-p)` so the expected sum stays the same). At `eval()` it's a no-op. The effect: the network can't rely on any single unit, so it learns more distributed, robust features — a cheap regularizer. Re-run with `--dropout 0.4` and watch the train/test loss gap shrink (at the cost of slower training-loss descent).
+**Dropout** randomly zeros a fraction `p` of activations during `train()` mode (and rescales the rest by `1/(1-p)` so the expected sum stays the same). At `eval()` it's a no-op. The effect: the network can't rely on any single unit, so it learns more distributed, robust features — a cheap regularizer. Re-run with more dropout and watch the train/test loss gap shrink (at the cost of slower training-loss descent):
+
+```bash
+python train.py --dropout 0.4
+```
 
 ### 3. Swap optimizers
 
@@ -63,7 +67,11 @@ python train.py --optimizer adam  --lr 1e-3    # fast convergence
 python train.py --optimizer adamw --lr 1e-3    # similar to Adam here (no weight decay tuning)
 ```
 
-Then give SGD its sweet spot: `--optimizer sgd --lr 0.05 --epochs 15`. It can match Adam — just needs more epochs.
+Then give SGD its sweet spot — it can match Adam, just needs more epochs:
+
+```bash
+python train.py --optimizer sgd --lr 0.05 --epochs 15
+```
 
 ### 4. Visualize first-layer weights
 
@@ -73,7 +81,11 @@ python visualize.py --ckpt mlp.pt --save first_layer_weights.png
 
 You get an 8×8 grid of 28×28 filters. Many should look like localized pen-stroke / edge detectors; some will look noisy — both expected. Higher-dropout checkpoints tend to look cleaner.
 
-(If you trained with non-default hidden sizes, pass them too: `--hidden 256 128`.)
+If you trained with non-default hidden sizes, pass them too:
+
+```bash
+python visualize.py --ckpt mlp.pt --hidden 256 128 --save first_layer_weights.png
+```
 
 ### 5. Break train/eval mode
 
