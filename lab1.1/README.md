@@ -115,10 +115,6 @@ If you trained with non-default hidden sizes, pass them so the checkpoint loads 
 python visualize.py --ckpt mlp.pt --hidden 256 128 --save first_layer_weights.png
 ```
 
-### 5. Break train/eval mode
-
-Comment out `model.train()` and `model.eval()` in `train.py` and re-run. Dropout stays active at test time → test accuracy drops and gets noisy. (BatchNorm would break the same way via running-stats vs batch-stats.)
-
 ## Flags
 
 | Flag | Default | Notes |
