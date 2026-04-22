@@ -47,12 +47,18 @@ Watch `train_loss` drift below `test_loss` after epoch 5 — that's overfitting.
 
 ### 3. Swap optimizers
 
-Same `--lr` across all three to see the raw difference:
+`--lr` is the **learning rate** — the step size per gradient update (`w ← w − lr · ∇w`). The three optimizers differ in how they compute that step:
+
+- **SGD** (Stochastic Gradient Descent): `w ← w − lr · g`. Here `g` is the raw gradient (with momentum in our setup, so it's a running average of recent gradients). Simple, but needs a large `lr` (~`0.05`) because gradients can be small.
+- **Adam**: divides each parameter's step by a running estimate of its gradient magnitude. This auto-scales per-parameter → robust to gradient scale, converges fast. Sweet spot ~`1e-3`.
+- **AdamW**: Adam + *decoupled* weight decay. Plain Adam couples L2 regularization into the adaptive step (which effectively cancels it); AdamW applies decay as a separate shrink-toward-zero term. Default choice for transformers today.
+
+Run all three at the *same* `--lr` to see the raw difference:
 
 ```bash
-python train.py --optimizer sgd   --lr 1e-3    # barely learns
+python train.py --optimizer sgd   --lr 1e-3    # barely learns — lr too small for raw SGD
 python train.py --optimizer adam  --lr 1e-3    # fast convergence
-python train.py --optimizer adamw --lr 1e-3    # Adam + decoupled weight decay
+python train.py --optimizer adamw --lr 1e-3    # similar to Adam here (no weight decay tuning)
 ```
 
 Then give SGD its sweet spot: `--optimizer sgd --lr 0.05 --epochs 15`. It can match Adam — just needs more epochs.
