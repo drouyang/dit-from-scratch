@@ -32,14 +32,6 @@
 
 The encoder discards information by passing the image through a bottleneck smaller than the input (3×32×32 = 3,072 values → 256 by default). What survives the bottleneck is what the encoder learned to treat as essential.
 
-**Why the two encoders learn differently**: CrossEntropy only needs features that discriminate between classes — it can ignore details that are consistent within a class (fur texture on all cats). MSE forces the encoder to preserve everything needed to reconstruct the image — textures, colors, shapes. This is why reconstruction latents are richer, and why VAEs (which use reconstruction loss) produce better generative latent spaces than pure classifiers.
-
-**Why the autoencoder previews the VAE**: a Variational Autoencoder is this exact structure with two additions:
-1. The encoder outputs *two* vectors — mean **μ** and log-variance **log σ²** — and the latent is *sampled* as `z = μ + σ · ε`, `ε ~ N(0,1)`.
-2. The loss gains a KL term that keeps the latent distribution near `N(0,1)`, making the space smooth and interpolatable.
-
-Everything else — the conv/deconv blocks, the bottleneck, the reconstruction loss — is shared.
-
 ## Files
 
 | File | What it is |
@@ -149,3 +141,13 @@ python visualize.py --ckpt ae_1024.pt --latent-dim 1024 --save recon_1024.png
 ```
 
 The `latent_dim=1024` reconstructions are noticeably sharper — the bottleneck is wide enough to pass through more spatial detail.
+
+## Discussion
+
+**Why the two encoders learn differently**: CrossEntropy only needs features that discriminate between classes — it can ignore details that are consistent within a class (fur texture on all cats). MSE forces the encoder to preserve everything needed to reconstruct the image — textures, colors, shapes. This is why reconstruction latents are richer, and why VAEs (which use reconstruction loss) produce better generative latent spaces than pure classifiers.
+
+**Why the autoencoder previews the VAE**: a Variational Autoencoder is this exact structure with two additions:
+1. The encoder outputs *two* vectors — mean **μ** and log-variance **log σ²** — and the latent is *sampled* as `z = μ + σ · ε`, `ε ~ N(0,1)`.
+2. The loss gains a KL term that keeps the latent distribution near `N(0,1)`, making the space smooth and interpolatable.
+
+Everything else — the conv/deconv blocks, the bottleneck, the reconstruction loss — is shared.
