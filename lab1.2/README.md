@@ -10,7 +10,9 @@
 
 ## What the model learns
 
-**CIFAR-10** is 60,000 32×32 RGB images across 10 classes (airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck). 50k train / 10k test. The classes are visually diverse and share no obvious low-level patterns — this forces the encoder to learn genuinely useful features rather than memorizing color statistics.
+**CIFAR-10** is 60,000 32×32 RGB images across 10 classes. 50k train / 10k test. The classes are visually diverse and share no obvious low-level patterns — this forces the encoder to learn genuinely useful features rather than memorizing color statistics.
+
+![CIFAR-10 sample images — one per class](cifar10_samples.png)
 
 The task is **unsupervised reconstruction**: given a raw image, compress it to a small latent vector, then expand it back. There are no class labels involved. The model is evaluated purely by how close the reconstruction is to the original, measured in per-pixel mean squared error (MSE).
 
