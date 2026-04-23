@@ -1,18 +1,17 @@
-"""Gradio webapp: click a CIFAR-10 test image, get the CNN classifier's prediction.
+"""Gradio webapp combining the CIFAR-10 classifier and autoencoder visualizer.
+
+Two tabs:
+  Classifier  — click a test image → predicted class + probability bars
+  Autoencoder — click a test image → original vs reconstruction + MSE
 
 Setup (from `lab1.2/demo/`):
     python -m venv .venv && source .venv/bin/activate
     pip install -r requirements.txt
     python app.py            # opens http://127.0.0.1:7860
 
-Expects a trained checkpoint at ../cnn_classifier.pt.
-Run `python train_classifier.py` from the lab1.2 directory first.
-
-The grid shows 100 test images — 10 per class, arranged by class row by row:
-  row 0: airplane × 10
-  row 1: automobile × 10
-  ...
-  row 9: truck × 10
+Expects checkpoints in lab1.2/:
+  cnn_classifier.pt   (from: python train_classifier.py)
+  cnn_autoencoder.pt  (from: python train_autoencoder.py)
 """
 
 import sys
@@ -26,31 +25,36 @@ import torchvision
 import torchvision.transforms as transforms
 from PIL import Image
 
-LAB_DIR = Path(__file__).resolve().parent.parent  # points at lab1.2/
+LAB_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(LAB_DIR))
-from cnn import Classifier  # noqa: E402
+from cnn import Autoencoder, Classifier  # noqa: E402
 
-CKPT = LAB_DIR / "cnn_classifier.pt"
 CLASSES = ["airplane", "automobile", "bird", "cat", "deer",
            "dog", "frog", "horse", "ship", "truck"]
 NORMALIZE = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-DISPLAY_SIZE = 96  # px — upscale 32×32 so the gallery is readable
+DISPLAY_SIZE = 96   # upscale 32×32 for readability in the gallery
+LARGE_SIZE   = 192  # size for the side-by-side original/reconstruction view
 
-
-# ---------- Load model ----------
 device = ("mps" if torch.backends.mps.is_available()
           else "cuda" if torch.cuda.is_available()
           else "cpu")
 
-model = Classifier(latent_dim=256)
-model.load_state_dict(torch.load(CKPT, map_location=device))
-model.eval()
-model.to(device)
+
+# ---------- Load models (None if checkpoint is missing) ----------
+def _load(cls, path, **kwargs):
+    if not Path(path).exists():
+        return None
+    m = cls(**kwargs)
+    m.load_state_dict(torch.load(path, map_location=device))
+    m.eval()
+    return m.to(device)
+
+classifier  = _load(Classifier,  LAB_DIR / "cnn_classifier.pt",  latent_dim=256)
+autoencoder = _load(Autoencoder, LAB_DIR / "cnn_autoencoder.pt", latent_dim=256)
 
 
 # ---------- Load 10 test images per class (100 total) ----------
 def _load_grid():
-    """Return (raw_tensors, true_labels, pil_images) for the 10×10 grid."""
     dataset = torchvision.datasets.CIFAR10(
         LAB_DIR / "data", train=False, download=True,
         transform=transforms.ToTensor(),
@@ -72,23 +76,29 @@ def _load_grid():
     return tensors, labels, pils
 
 
+def _to_pil(tensor, size):
+    arr = (tensor.permute(1, 2, 0).clamp(0, 1).numpy() * 255).astype(np.uint8)
+    return Image.fromarray(arr).resize((size, size), Image.NEAREST)
+
+
 raw_tensors, true_labels, gallery_pils = _load_grid()
 
 
-# ---------- Inference ----------
+# ---------- Inference callbacks ----------
 def classify(evt: gr.SelectData):
+    if classifier is None:
+        return "**No checkpoint found.** Run `python train_classifier.py` first.", {}
     idx = evt.index
-    img_tensor = raw_tensors[idx]
-    true_label = true_labels[idx]
+    img_tensor  = raw_tensors[idx]
+    true_label  = true_labels[idx]
 
     x = NORMALIZE(img_tensor).unsqueeze(0).to(device)
     with torch.no_grad():
-        logits = model(x)
-        probs = F.softmax(logits, dim=1).squeeze(0).cpu().tolist()
+        probs = F.softmax(classifier(x), dim=1).squeeze(0).cpu().tolist()
 
-    pred = int(np.argmax(probs))
+    pred    = int(np.argmax(probs))
     correct = pred == true_label
-    mark = "✓" if correct else "✗"
+    mark    = "✓" if correct else "✗"
 
     summary = (
         f"### {mark} Predicted: **{CLASSES[pred]}**\n"
@@ -99,27 +109,53 @@ def classify(evt: gr.SelectData):
     return summary, label_dict
 
 
+def reconstruct(evt: gr.SelectData):
+    if autoencoder is None:
+        return None, None, "**No checkpoint found.** Run `python train_autoencoder.py` first."
+    idx = evt.index
+    img_tensor = raw_tensors[idx]
+
+    x = img_tensor.unsqueeze(0).to(device)
+    with torch.no_grad():
+        recon, _ = autoencoder(x)
+
+    mse = F.mse_loss(recon, x).item()
+    original_pil = _to_pil(img_tensor,            LARGE_SIZE)
+    recon_pil    = _to_pil(recon.squeeze(0).cpu(), LARGE_SIZE)
+    summary      = f"Per-pixel MSE: **{mse:.5f}**  (pixel error ≈ {mse**0.5:.3f})"
+    return original_pil, recon_pil, summary
+
+
 # ---------- UI ----------
-with gr.Blocks(title="CIFAR-10 Classifier") as demo:
+with gr.Blocks(title="CIFAR-10 CNN Demo") as demo:
     gr.Markdown(
-        "# CIFAR-10 CNN Classifier\n"
-        "Click any image to classify it. "
-        "Grid is 10 rows × 10 columns — one row per class "
+        "# CIFAR-10 CNN Demo\n"
+        "Grid: 10 rows × 10 columns — one row per class "
         "(airplane → automobile → bird → cat → deer → dog → frog → horse → ship → truck)."
     )
-    gallery = gr.Gallery(
-        value=gallery_pils,
-        columns=10,
-        rows=10,
-        height=700,
-        show_label=False,
-        object_fit="contain",
-    )
-    with gr.Row():
-        summary_md = gr.Markdown("*Click an image above.*")
-        prob_label = gr.Label(label="Class probabilities", num_top_classes=10)
 
-    gallery.select(classify, outputs=[summary_md, prob_label])
+    with gr.Tabs():
+
+        with gr.Tab("Classifier"):
+            clf_gallery = gr.Gallery(
+                value=gallery_pils, columns=10, rows=10,
+                height=700, show_label=False, object_fit="contain",
+            )
+            with gr.Row():
+                clf_summary = gr.Markdown("*Click an image above.*")
+                clf_probs   = gr.Label(label="Class probabilities", num_top_classes=10)
+            clf_gallery.select(classify, outputs=[clf_summary, clf_probs])
+
+        with gr.Tab("Autoencoder"):
+            ae_gallery = gr.Gallery(
+                value=gallery_pils, columns=10, rows=10,
+                height=700, show_label=False, object_fit="contain",
+            )
+            ae_summary = gr.Markdown("*Click an image above.*")
+            with gr.Row():
+                ae_original = gr.Image(label="Original")
+                ae_recon    = gr.Image(label="Reconstruction")
+            ae_gallery.select(reconstruct, outputs=[ae_original, ae_recon, ae_summary])
 
 
 if __name__ == "__main__":

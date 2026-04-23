@@ -145,7 +145,7 @@ The `latent_dim=1024` reconstructions are noticeably sharper — the bottleneck 
 
 ### 7. Interactive demo
 
-After training the classifier, launch a Gradio webapp that shows a 10×10 grid of test images and classifies whichever one you click:
+After training, launch a Gradio webapp with two tabs:
 
 ```bash
 cd demo
@@ -154,7 +154,12 @@ pip install -r requirements.txt
 python app.py   # opens http://127.0.0.1:7860
 ```
 
-Each row is one class (airplane → truck). Clicking an image shows the predicted class, whether it's correct, confidence %, and the full probability distribution across all 10 classes.
+Each tab shows the same 10×10 grid of test images (one row per class, airplane → truck):
+
+- **Classifier tab** — click an image to see the predicted class, whether it's correct, confidence %, and the full probability distribution across all 10 classes.
+- **Autoencoder tab** — click an image to see the original and its reconstruction side by side, plus the per-pixel MSE.
+
+Tabs are independent — each works as long as its own checkpoint exists (`cnn_classifier.pt` / `cnn_autoencoder.pt`).
 
 ## Discussion
 
