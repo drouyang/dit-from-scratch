@@ -40,6 +40,7 @@ The encoder discards information by passing the image through a bottleneck small
 | `train_classifier.py` | Trains the classifier with CrossEntropyLoss; reports train/test accuracy per epoch |
 | `train_autoencoder.py` | Trains the autoencoder with MSE reconstruction loss |
 | `visualize.py` | Loads a checkpoint and plots a side-by-side grid of originals vs reconstructions |
+| `demo/app.py` | Gradio webapp: click any test image to classify it interactively |
 
 ## Instructions
 
@@ -141,6 +142,19 @@ python visualize.py --ckpt ae_1024.pt --latent-dim 1024 --save recon_1024.png
 ```
 
 The `latent_dim=1024` reconstructions are noticeably sharper — the bottleneck is wide enough to pass through more spatial detail.
+
+### 7. Interactive demo
+
+After training the classifier, launch a Gradio webapp that shows a 10×10 grid of test images and classifies whichever one you click:
+
+```bash
+cd demo
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python app.py   # opens http://127.0.0.1:7860
+```
+
+Each row is one class (airplane → truck). Clicking an image shows the predicted class, whether it's correct, confidence %, and the full probability distribution across all 10 classes.
 
 ## Discussion
 
