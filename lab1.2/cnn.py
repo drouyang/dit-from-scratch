@@ -148,6 +148,29 @@ class Decoder(nn.Module):
         return self.decoder(z)
 
 
+class Classifier(nn.Module):
+    """CNN image classifier: same Encoder backbone, linear head instead of Decoder.
+
+    Compresses (3, 32, 32) → latent_dim via the Encoder, then maps latent_dim → 10
+    class logits. The encoder weights are identical to the one in Autoencoder — this
+    shows that the same conv features can serve reconstruction *or* classification.
+
+    Training uses CrossEntropyLoss (multi-class, not MSE). There is no decoder.
+    """
+
+    def __init__(self, latent_dim=256, num_classes=10):
+        super().__init__()
+        self.encoder = Encoder(latent_dim)
+        # Linear classifier head: maps the bottleneck vector to class logits.
+        # CrossEntropyLoss applies softmax internally, so we output raw logits here.
+        self.head = nn.Linear(latent_dim, num_classes)
+
+    def forward(self, x):
+        # x: (B, 3, 32, 32)  →  logits: (B, num_classes)
+        z = self.encoder(x)
+        return self.head(z)
+
+
 class Autoencoder(nn.Module):
     """Encoder + Decoder stacked into a single model.
 
