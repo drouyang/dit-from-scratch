@@ -8,7 +8,7 @@
 
 **Deliverables**:
 - `train_classifier.py` training a CNN classifier on CIFAR-10, reaching ~70% test accuracy.
-- `train.py` training a CNN autoencoder on CIFAR-10, with reconstructions visible in `reconstructions.png`.
+- `train_autoencoder.py` training a CNN autoencoder on CIFAR-10, with reconstructions visible in `reconstructions.png`.
 
 ## What the model learns
 
@@ -38,7 +38,7 @@ The encoder discards information by passing the image through a bottleneck small
 | --- | --- |
 | `cnn.py` | `Encoder`, `Decoder`, `Autoencoder`, and `Classifier` modules with shape annotations and concept comments |
 | `train_classifier.py` | Trains the classifier with CrossEntropyLoss; reports train/test accuracy per epoch |
-| `train.py` | Trains the autoencoder with MSE reconstruction loss |
+| `train_autoencoder.py` | Trains the autoencoder with MSE reconstruction loss |
 | `visualize.py` | Loads a checkpoint and plots a side-by-side grid of originals vs reconstructions |
 
 ## Instructions
@@ -89,7 +89,7 @@ Open `cnn.py` and read the comments. The core ideas to lock in:
 Now add the decoder. Same encoder backbone, but the latent is expanded back to pixels instead of classified:
 
 ```bash
-python train.py
+python train_autoencoder.py
 ```
 
 Default: Adam, lr=1e-3, 30 epochs, latent_dim=256. Per-epoch output:
@@ -109,9 +109,9 @@ epoch 30 |   8.1s | train_loss 0.00712 | test_loss 0.00748
 The `--latent-dim` flag controls how aggressively the image is compressed. Run all three:
 
 ```bash
-python train.py --latent-dim 32   --save-path ae_32.pt
-python train.py --latent-dim 256  --save-path ae_256.pt   # default
-python train.py --latent-dim 1024 --save-path ae_1024.pt
+python train_autoencoder.py --latent-dim 32   --save-path ae_32.pt
+python train_autoencoder.py --latent-dim 256  --save-path ae_256.pt   # default
+python train_autoencoder.py --latent-dim 1024 --save-path ae_1024.pt
 ```
 
 Larger latent → lower MSE, sharper reconstructions, but less compression. Smaller latent → higher MSE, blurrier reconstructions, but the model is forced to learn only the most essential structure.
