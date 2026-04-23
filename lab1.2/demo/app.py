@@ -139,7 +139,7 @@ with gr.Blocks(title="CIFAR-10 CNN Demo") as demo:
         with gr.Tab("Classifier"):
             clf_gallery = gr.Gallery(
                 value=gallery_pils, columns=10, rows=10,
-                height=700, show_label=False, object_fit="contain",
+                height=700, show_label=False, object_fit="contain", allow_preview=False,
             )
             with gr.Row():
                 clf_summary = gr.Markdown("*Click an image above.*")
@@ -149,7 +149,7 @@ with gr.Blocks(title="CIFAR-10 CNN Demo") as demo:
         with gr.Tab("Autoencoder"):
             ae_gallery = gr.Gallery(
                 value=gallery_pils, columns=10, rows=10,
-                height=700, show_label=False, object_fit="contain",
+                height=700, show_label=False, object_fit="contain", allow_preview=False,
             )
             ae_summary = gr.Markdown("*Click an image above.*")
             with gr.Row():
