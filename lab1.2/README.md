@@ -23,7 +23,7 @@
 (3, 32, 32)  →  [Encoder]  →  (latent_dim,)  →  [Linear head]  →  (10,)
 ```
 
-**Part B — Reconstruction (unsupervised).** No labels. The model compresses the image to a latent vector, then expands it back to pixels. It learns by minimizing per-pixel MSE between the reconstruction and the original.
+**Part B — Reconstruction (unsupervised).** No labels. The model compresses the image to a latent vector, then expands it back to pixels. It learns by minimizing per-pixel MSE (mean squared error — the average of `(x̂ᵢ - xᵢ)²` over all pixels) between the reconstruction and the original.
 
 ```
  input image                    latent                  reconstructed image
