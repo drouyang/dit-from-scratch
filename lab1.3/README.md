@@ -66,6 +66,8 @@ Why reverse and not copy: copy is solved by `attn = I` (each position attends to
 
 The model has exactly **one** attention layer. No MLP. No LayerNorm. No residual. If it reaches high accuracy, attention alone is doing the work.
 
+**What Q, K, V each learn.** Given an input sequence of length `L`, at each output position `i`: the query `Q[i]` encodes "I am at position `i`, looking for position `L-1-i`"; each key `K[j]` encodes "I am at position `j`"; each value `V[j]` carries the token originally at input position `j`. The dot product `Q[i] · K[j]` peaks at `j = L-1-i`, so softmax concentrates the attention weight there. The weighted sum is ~100% of `V[L-1-i]`, and the linear head reads that vector to predict the token that was at position `L-1-i`. Q and K only need to encode position; only V has to carry token identity — that division of labor is emergent from training, not hardcoded.
+
 ## Files
 
 | File | What it is |
