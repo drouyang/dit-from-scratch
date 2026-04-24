@@ -12,6 +12,28 @@
 - `train.py` training an attention-only model on the reverse task to ≥99% per-token accuracy.
 - `visualize.py` producing an attention heatmap showing the learned anti-diagonal pattern.
 
+## What attention was invented for
+
+Before attention (Bahdanau et al. 2014), the state-of-the-art for machine translation was the **encoder-decoder RNN**: an encoder RNN read the source sentence word-by-word and compressed the whole thing into a single fixed-size hidden vector; a decoder RNN consumed that vector and produced the target sentence. Short sentences worked; long ones didn't. The single vector is a bottleneck — you cannot cram a 30-word sentence into 512 numbers and recover every word faithfully.
+
+Bahdanau's fix: keep **all** the encoder hidden states (one per source word) and let the decoder, at each output step, dynamically read a weighted combination of them. The weights come from a similarity score between the decoder's current state and each source state, normalized by softmax. The decoder now "attends to" different source words depending on what it needs right now — the metaphor that gave the mechanism its name.
+
+In 2017 Vaswani et al. ("Attention is All You Need") went further: drop the RNNs entirely. Stack attention layers and you get a Transformer. Attention is no longer a bridge between two RNNs — it is the **only** mechanism that moves information between positions. That is the architecture this lab builds.
+
+## What "routing information" means
+
+"Information" here means the numerical content at each position of the activation tensor — at the start, position `i`'s vector carries info about the token at position `i`. **Routing** means deciding which positions' content flows into which other positions. Different layers do this differently:
+
+| Layer | How positions mix | Routing is… |
+|---|---|---|
+| Convolution | pixel mixes with its fixed local neighborhood | **static** — same kernel everywhere, baked in at train time |
+| Fully-connected across positions | every position to every position via one weight matrix | **static** — fixed weights, same for every input |
+| Attention | every position can read from every other position | **dynamic** — weights are *computed from the inputs themselves*, every forward pass |
+
+That last row is the qualitative leap. In a CNN, "combine pixel (3,5) with pixel (4,5)" is a fact about the architecture. In attention, "combine position 3 with position 7" is a decision the network makes on the fly based on what's currently at positions 3 and 7. Two different inputs produce two different attention matrices. This is called **content-dependent** (or **data-dependent**) routing, and it is why the same attention kernel works on text, image patches, audio frames, and anything else you can tokenize — the routing is not hardcoded for a modality.
+
+In this lab the tokens are meaningless integers, so attention routes on **position** rather than token content: Q and K are built from `pos_embed`, producing similarity peaks at `j = L-1-i`. In a language model it routes on both. The mechanism is identical.
+
 ## What the model learns
 
 **The reverse task.** Given a random integer sequence of length `L`, output the reversed sequence. That's it — no language, no real data, just `[a, b, c, d] → [d, c, b, a]`.
