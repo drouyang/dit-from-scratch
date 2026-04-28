@@ -136,6 +136,8 @@ attn   = softmax(scores, -1)     # row-normalize: each query distributes attenti
 out    = attn @ V                # each output row is a convex combination of value rows
 ```
 
+**The one-line summary.** `attn` is a matrix of weights between `L_q` queries and `L_k` keys, where each row sums to 1 (softmax across keys). It's used as the weights in a weighted average of the value vectors — that average is the output. Everything else in the kernel is just *how* those weights are computed: from scaled query-key similarity.
+
 **Why `sqrt(d_k)`?** The variance of `q · k` grows linearly in `d_k`. Without scaling, softmax saturates near a one-hot vector and its gradient vanishes. Dividing by `sqrt(d_k)` keeps the pre-softmax logits roughly unit-variance at initialization.
 
 **Why multi-head?** A single head has one `(d_k × d_k)` similarity pattern for the whole sequence. Splitting into `H` heads gives `H` independent patterns of width `d_k / H` — each can specialize. Total parameter count is unchanged: you're reshaping the same `(D, D)` projection.
