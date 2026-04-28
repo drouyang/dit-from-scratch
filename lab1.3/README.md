@@ -95,7 +95,12 @@ Training auto-selects device: CUDA → Apple MPS → CPU. No dataset download �
 
 ### 2. Verify the implementation
 
-Before training, prove the kernel is correct:
+`attention.py` implements a drop-in equivalent of `torch.nn.MultiheadAttention`: same scaled dot-product kernel, same Q/K/V split into heads, same output projection, and the same parameter layout (`in_proj_weight`, `in_proj_bias`, `out_proj.weight`, `out_proj.bias`) — so weights copy 1-to-1 between the two. The same module handles both regimes used in this course: unmasked self-attention (the reverse task here, and DiT's patch-token attention later) and causal-masked self-attention (lab 1.4 / nanoGPT).
+
+`verify.py` copies a fresh set of weights from `torch.nn.MultiheadAttention` into ours and checks that the two produce identical results — both directions:
+
+- **Forward** — outputs and per-head attention weights match for unmasked and causal cases, plus the causal upper-triangle is exactly zero.
+- **Backward** — gradients w.r.t. the input match. This is the parity that matters for training: identical gradients mean an optimizer step produces the same weight update in both implementations, so anything you train against `attention.py` would have trained the same way against PyTorch's built-in.
 
 ```bash
 python verify.py
@@ -119,7 +124,7 @@ backward pass parity (gradients w.r.t. input)
 ALL CHECKS PASSED ✓
 ```
 
-This works because `MultiHeadAttention` in `attention.py` uses the same parameter layout as PyTorch's built-in (`in_proj_weight`, `in_proj_bias`, `out_proj.weight`, `out_proj.bias`), so weights copy 1-to-1. If outputs match at the same weights, the math is right.
+If forward outputs match at the same weights and backward gradients match at the same inputs, the math is right — both at inference time and across training updates.
 
 ### 3. How scaled dot-product attention works
 
