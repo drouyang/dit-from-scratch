@@ -138,9 +138,13 @@ out    = attn @ V                # each output row is a convex combination of va
 
 **The one-line summary.** `attn` is a matrix of weights between `L_q` queries and `L_k` keys, where each row sums to 1 (softmax across keys). It's used as the weights in a weighted average of the value vectors — that average is the output. Everything else in the kernel is just *how* those weights are computed: from scaled query-key similarity.
 
+**What `D` is.** `D = embed_dim` is the shared width of input token features, query / key / value vectors, and the attention output. Each token enters as a `D`-dim vector, gets projected into `D`-dim Q/K/V, and leaves as a `D`-dim attended vector. Bigger `D` = richer per-token features and more capacity in each weighted-average output.
+
 **Why `sqrt(d_k)`?** The variance of `q · k` grows linearly in `d_k`. Without scaling, softmax saturates near a one-hot vector and its gradient vanishes. Dividing by `sqrt(d_k)` keeps the pre-softmax logits roughly unit-variance at initialization.
 
-**Why multi-head?** A single head has one `(d_k × d_k)` similarity pattern for the whole sequence. Splitting into `H` heads gives `H` independent patterns of width `d_k / H` — each can specialize. Total parameter count is unchanged: you're reshaping the same `(D, D)` projection.
+**Why multi-head?** Multi-head attention divides the `D` features into `H` groups of width `d_head = D/H`, and each head runs attention on **only its own partition** — its own Q/K/V slice, its own `(L_q, L_k)` weight matrix, its own weighted average. The `H` outputs are concatenated back to width `D` and linearly mixed by `out_proj`. Same parameters, same compute, but `H` independent routing patterns over `H` independent feature subspaces.
+
+The intuition for *why* this helps: a dot product of two width-`D` vectors collapses `D` features into a single number — one verdict on "do these two tokens match?" If features 0–15 say "syntactically yes" but features 16–31 say "semantically no," the contributions cancel inside the sum and the score is mush. With one head, the single `(L_q, L_k)` matrix has to compromise across all the different kinds of similarity the features encode. Multi-head lets you compute `H` different similarity scores per `(q, k)` pair, each measuring a different *axis* of similarity, and route a different channel of values per score — sharp specialized routing instead of one generalist matrix.
 
 **What the mask does.** `attn_mask` either blocks (True/-inf) or reweights (additive float) specific query-key pairs *before* softmax. In lab 1.4 (nanoGPT) you'll use a causal mask so position `i` can't see positions `> i`. The reverse task uses no mask — each output position needs to see the whole input to find its mirror partner.
 
