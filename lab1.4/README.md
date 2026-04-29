@@ -117,13 +117,6 @@ Two things this gets you:
 - **Speed.** PyTorch's built-in dispatches to **Flash Attention** on supported hardware (CUDA, MPS) — fused softmax+matmul that runs in less memory and faster than a naïve unfused implementation. Same mathematical result, much better wall-clock.
 - **Less plumbing.** `is_causal=True` applies the upper-triangular mask inside the kernel, with no need to materialize an `(L, L)` boolean tensor or pass it through every block.
 
-The lab 1.3 → 1.4 progression is therefore "first verify the kernel is correct from scratch, then trust PyTorch's optimized version of the same kernel." This is exactly what production code does — you write the math once to prove you understand it, then use the library implementation.
-
-| Lab | Implementation | Mask | Task | What attention learns |
-| --- | --- | --- | --- | --- |
-| 1.3 | from-scratch + parity check | none | reverse | positional routing — anti-diagonal attention |
-| 1.4 | `F.scaled_dot_product_attention` | causal | next-char | content-based routing over past tokens |
-
 ### 3. Block structure
 
 Each `Block` is **pre-norm**: LayerNorm before each sublayer, residual added after.
