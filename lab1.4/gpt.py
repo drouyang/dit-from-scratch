@@ -201,7 +201,14 @@ class GPT(nn.Module):
         fine for a teaching impl; production code would cache.
         """
         self.eval()
+        # idx is the running token sequence. On entry it's the prompt; every
+        # iteration appends one freshly sampled token via torch.cat, so L grows
+        # by 1 each step. After max_new_tokens iterations idx has length
+        # prompt_len + max_new_tokens and is what we return.
         for _ in range(max_new_tokens):
+            # idx_cond is idx truncated to the last block_size tokens — the
+            # actual input to the model this step. Anything older falls off
+            # the front of the context window.
             idx_cond = idx[:, -self.block_size:]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] / temperature
