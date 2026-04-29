@@ -10,21 +10,6 @@
 #   MLP(embed_dim)               — position-wise feed-forward sublayer
 #   Block(embed_dim, num_heads)  — pre-norm: LN → attn → +res, LN → MLP → +res
 #   GPT(...)                     — embed + N Blocks + final LN + linear head
-#
-# Why we use PyTorch's built-in attention here:
-#   In lab 1.3 you wrote scaled_dot_product_attention from scratch and
-#   proved it bit-for-bit equivalent to torch.nn.MultiheadAttention. Now
-#   that the math is yours, there's no reason to re-invoke the from-scratch
-#   version — PyTorch's `F.scaled_dot_product_attention` dispatches to
-#   Flash Attention on supported hardware (fused softmax+matmul, lower
-#   memory, faster). Same kernel; better wrapper.
-#
-# Why this matters for DiT:
-#   A DiT block is structurally identical to a GPT block — attention plus
-#   an MLP, both wrapped in pre-norm + residual. The only DiT-specific
-#   thing is AdaLN-Zero modulation of the LayerNorms from a conditioning
-#   vector. Get the GPT block right here; DiT is "this block, but with
-#   image patches instead of text tokens, and a modulated LN."
 
 import math
 
