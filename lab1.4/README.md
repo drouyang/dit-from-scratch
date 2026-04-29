@@ -190,7 +190,7 @@ Two ideas hold up the whole lab — the **transformer block** and the **sampling
 
 Build it from the inside out. Each piece below assumes the one above.
 
-**`CausalSelfAttention`** — 
+**`CausalSelfAttention`** — Compare to your hand-rolled version in lab 1.3 — the math is identical; the fused kernel is just faster and skips materializing the `(L, L)` causal mask.
 
 ```python
 out = F.scaled_dot_product_attention(
@@ -199,8 +199,6 @@ out = F.scaled_dot_product_attention(
     is_causal=True,
 )
 ```
-
-Compare to your hand-rolled version in lab 1.3 — the math is identical; the fused kernel is just faster and skips materializing the `(L, L)` causal mask.
 
 **`MLP`** — `Linear(D, 4D) → GELU → Linear(4D, D) → Dropout`, applied independently at every sequence position:
 
