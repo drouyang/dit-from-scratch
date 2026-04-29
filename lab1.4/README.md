@@ -190,24 +190,17 @@ Two ideas hold up the whole lab — the **transformer block** and the **sampling
 
 Build it from the inside out. Each piece below assumes the one above.
 
-**`CausalSelfAttention`** — one packed linear projects `x` into Q, K, V; reshape into `n_head` heads; fused causal attention; merge and project back:
+**`CausalSelfAttention`** — 
 
 ```python
-q, k, v = self.c_attn(x).split(D, dim=-1)
-q = q.view(B, L, H, Dh).transpose(1, 2)
-k = k.view(B, L, H, Dh).transpose(1, 2)
-v = v.view(B, L, H, Dh).transpose(1, 2)
-
 out = F.scaled_dot_product_attention(
     q, k, v,
     dropout_p=self.dropout_p if self.training else 0.0,
     is_causal=True,
 )
-out = out.transpose(1, 2).contiguous().view(B, L, D)
-return self.resid_dropout(self.c_proj(out))
 ```
 
-Compare to your hand-rolled version in lab 1.3 — the math is identical; the fused kernel is just faster and skips materializing the `(L, L)` mask.
+Compare to your hand-rolled version in lab 1.3 — the math is identical; the fused kernel is just faster and skips materializing the `(L, L)` causal mask.
 
 **`MLP`** — `Linear(D, 4D) → GELU → Linear(4D, D) → Dropout`, applied independently at every sequence position:
 
