@@ -23,7 +23,7 @@ The four GPT-2 sizes are the *same architecture* with three hyperparameters scal
 | `gpt2-large` | 774M | 36 | 1280 | 20 | 64 | 1024 | ~3.1 GB |
 | `gpt2-xl` | 1.5B | 48 | 1600 | 25 | 64 | 1024 | ~6.2 GB |
 
-`head_dim = 64` is held constant — width grows by *adding more heads*, not bigger heads. Layers and width scale together (Kaplan et al. 2020 showed lopsided scaling is suboptimal). All four were trained on the same WebText corpus (~40 GB), with the same BPE tokenizer (50257 tokens).
+`head_dim = 64` is held constant — width grows by *adding more heads*, not bigger heads. Layers and width scale together. All four were trained on the same WebText corpus (~40 GB), with the same BPE tokenizer (50257 tokens).
 
 ## How `from_pretrained` works
 
