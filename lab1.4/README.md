@@ -53,7 +53,37 @@ The causal mask ensures position `i` never sees position `i+1` during training, 
 | ≈ 1.5 | actual English words; speaker names ("ROMEO:") capitalized correctly |
 | ≈ 1.3 | short phrases, archaic English ("thou", "thee", "wherefore"), turn-taking dialogue patterns |
 
-Reaching val loss ≈ 1.3 in 5000 steps on the default config typically gives Shakespeare-flavored output: readable English, recognizable rhythm, but no semantic content (the model has no idea what it's saying).
+The model is **autoregressive**: it generates one token at a time, and each new token is conditioned on every token that came before it (the prompt *and* the model's own previous outputs). Given the prompt `ROMEO:` it predicts the next character, appends it, predicts the next, and so on — feeding its growing output back in as context at every step. Sampling from `"ROMEO:"` at each stage looks roughly like this (representative — your run will differ):
+
+```text
+val_loss ≈ 4.2   (random init — uniform over 65 chars)
+  ROMEO:qX;3J!~Mz $vkP'fY:9.gNB2hcW  *Lr&[7
+
+val_loss ≈ 3.0   (unigram — right letter/space frequencies, no structure)
+  ROMEO:e ot a thnoiea itre oi e htra
+  es ohn oea m hntoe saiet ondoer thi
+
+val_loss ≈ 2.0   (bigrams + spacing — fake words with real word shapes)
+  ROMEO: the wast ond hion of fas ther
+  whe and the sice ar mest of houre an
+
+val_loss ≈ 1.5   (real English words; learned the "SPEAKER:\n..." format)
+  ROMEO:
+  I will the hand of the king,
+  And speak my heart to be the lord.
+
+val_loss ≈ 1.3   (Shakespeare-flavored phrasing, turn-taking dialogue)
+  ROMEO:
+  Wherefore art thou so heavy, gentle friend?
+  I pray thee, speak no more of this sad hour.
+
+  JULIET:
+  Nay, my good lord, mine eyes do weep for thee.
+```
+
+Notice the format itself is *learned*, not hard-coded: at val_loss ≈ 1.5 the model has figured out from the data that a speaker label is followed by a newline and then dialogue, and that a blank line separates speakers. Nothing in the training loop tells it this — it's just what minimizes next-character cross-entropy on the corpus.
+
+Reaching val loss ≈ 1.3 in 5000 steps on the default config typically gives Shakespeare-flavored output: readable English, recognizable rhythm, but no semantic content (the model has no idea what it's saying). The training goal isn't to produce *correct* Shakespeare — it's to learn the **distribution** of the corpus well enough that samples are indistinguishable in style. That same objective, applied to images instead of characters, is exactly what DiT is doing in lab 3.
 
 ## Files
 
