@@ -210,7 +210,20 @@ class GPT(nn.Module):
             # actual input to the model this step. Anything older falls off
             # the front of the context window.
             idx_cond = idx[:, -self.block_size:]
+            # In PyTorch, calling a module instance (self(x)) invokes
+            # nn.Module.__call__, which runs hooks then calls self.forward(x).
             logits, _ = self(idx_cond)
+            # The logits at position i are the model's prediction for the token
+            # at position i+1. Positions 0..L-2 predict tokens we already have
+            # — useful for computing training loss, useless for generation.
+            # The model just did a full forward pass over L positions but we
+            # throw away L-1 of them. Production code would use a KV cache so
+            # each step costs O(L) instead of O(L²).
+            #
+            # Temperature rescales the logits before softmax:
+            #   T → 0:  distribution → one-hot on argmax (greedy/deterministic)
+            #   T = 1:  the model's raw distribution
+            #   T → ∞:  logits → 0, distribution → uniform (pure random)
             logits = logits[:, -1, :] / temperature
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
