@@ -28,6 +28,24 @@ The same `gpt.py` architecture handles all three — they differ only in tokeniz
 
 **TinyShakespeare** is ~1MB of plays from the First Folio, concatenated into one file. ~65 unique characters (uppercase + lowercase + punctuation + newline). At char-level there's no tokenizer to install — every character is a token, and the vocab is just `sorted(set(text))`.
 
+The first few lines of `data/input.txt` give a sense of what the model is fitting:
+
+```text
+First Citizen:
+Before we proceed any further, hear me speak.
+
+All:
+Speak, speak.
+
+First Citizen:
+You are all resolved rather to die than to famish?
+
+All:
+Resolved. resolved.
+```
+
+That format — `SPEAKER:\nLINE OF DIALOGUE\n\n` — repeats throughout the file, which is why a trained model produces text that *looks* like a play even though nothing in the architecture knows what a play is.
+
 The model is **autoregressive**: it generates one token at a time, and each new token is conditioned on every token that came before it (the prompt *and* the model's own previous outputs). Given the prompt `ROMEO:` it predicts the next character, appends it, predicts the next, and so on — feeding its growing output back in as context at every step. Sampling from `"ROMEO:"` at each stage looks roughly like this (representative — your run will differ):
 
 ```text
