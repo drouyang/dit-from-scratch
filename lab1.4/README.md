@@ -137,7 +137,7 @@ x ─┬─► LN ─► MHA ─┐ ┌─► LN ─► MLP ─┐
 python train.py
 ```
 
-Default: 6 layers, 6 heads, embedding dim 384, block size 256, batch size 64, 5000 steps. ~10M parameters. ~5–10 minutes on M3 MPS to val loss ≈ 1.3.
+Default: 6 layers, 6 heads, embedding dim 384, block size 256, batch size 64, 5000 steps. ~10M parameters. ~50 minutes end-to-end on an M3 MPS to val loss ≈ 1.3.
 
 Per-eval log:
 
