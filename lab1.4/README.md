@@ -360,23 +360,11 @@ One iteration, end to end:
 
 This loop is `O(L²)` per generated token because the full prefix is re-fed to every block on every step. Production code caches each block's per-step K/V tensors so each new step is `O(L)` — but the math is identical; KV caching just memoizes values that weren't going to change.
 
-### Suggested exercises
-
-- **Disable weight tying.** Comment out `self.head.weight = self.token_embed.weight` in `GPT.__init__` and retrain. Compare final val loss and parameter count.
-- **Swap to post-norm.** Move the LayerNorms in `Block.forward` to *after* each sublayer. Watch the loss curve — much less stable, may not converge without warmup tuning.
-- **Print attention weights.** Replace the fused call with the unfused formulation `(Q @ Kᵀ / √D).softmax(-1) @ V` so you can return the `(L, L)` attention map. Visualize for a generated sample — late-layer heads should concentrate on a few semantically relevant past positions.
-- **Greedy decoding.** Replace `multinomial` with `argmax` in `generate`. Output becomes deterministic per prompt — and usually noticeably worse, looping on common phrases.
-- **Add KV caching.** Cache `k` and `v` inside `CausalSelfAttention` across generation steps so each new token costs `O(L)` instead of `O(L²)`. Measure the speedup at `max_new_tokens=2000`.
-
 ## Discussion
 
 **Why this is "a transformer block," not just attention.** The composable unit of every modern LLM (and DiT) is the *block*: pre-norm attention + pre-norm MLP, both residual. Once you have one block, you stack N of them — that's the whole architecture. Everything in DiT, ViT, GPT, BERT, and LLaMA is variations on what each sublayer does to the per-token residual stream.
 
 **Why next-char prediction is the right objective for self-supervised learning on text.** No labels needed — the input *is* the target, shifted by one. Every character of the corpus is a training signal. The model that minimizes this loss has learned the joint distribution of text, and the same loss objective then trivially gives generation: just sample the predicted distribution one token at a time.
-
-**Why weight tying.** The output head's row for token `t` and the input embedding for token `t` should both be "the direction in feature space that means token `t`." Forcing them to share parameters cuts `vocab_size × n_embd` parameters and improves perplexity in nearly every published comparison. Cheap, mandatory.
-
-**Why the GPT-2 residual init scaling.** Each block adds two residual contributions (the attention `out_proj` and the MLP `fc2`). Without rescaling, activation variance grows roughly linearly with depth, and a deep stack diverges early in training. Initializing those projections with std `0.02 / sqrt(2 × n_layer)` keeps the residual stream's variance flat through the depth.
 
 **What changes for DiT.** Same Block structure, but:
 - Tokens are flattened image patches (lab 3.1's `patchify`) instead of characters.
