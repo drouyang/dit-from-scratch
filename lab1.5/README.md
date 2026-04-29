@@ -158,11 +158,27 @@ done
 What each task tells you (lower perplexity / higher accuracy is better):
 
 - **`lambada_openai`** — last-word prediction over book passages. Tests *long-range* coherence; the GPT-2 paper's headline result.
+  *Example:* "…my mother is going to die. She'll be gone, just like Dad. There won't be anyone left to take care of me. I'll be all ___."  → expected: **alone**. The whole paragraph is needed to predict that one word.
+
 - **`wikitext`** — perplexity on Wikipedia. Classic LM benchmark, what the GPT-2 paper reports.
+  *Example:* "The Eiffel Tower is a wrought-iron lattice tower on the Champ de Mars in ___, France." Score is per-token surprise across long passages — no single answer; lower perplexity = the model finds Wikipedia text less surprising.
+
 - **`hellaswag`** — sentence-completion multiple choice. Common sense; near random at 124M, noticeable gains by 1.5B.
+  *Example:* "A woman is outside with a bucket and a dog. The dog is running around trying to avoid a bath. She…"
+    a) rinses the bucket off with soap and blow dries the dog's head
+    b) uses a hose to keep it from getting soapy
+    c) **gets the dog wet, then it runs away again** ← correct
+    d) gets into a bath tub with the dog
+  The wrong options are designed to *sound* fluent so a weak LM can't pick the right one by surface features alone.
+
 - **`winogrande`** — pronoun-resolution common sense.
+  *Example:* "The trophy doesn't fit into the brown suitcase because **it** is too large." Does "it" refer to the trophy or the suitcase? (**trophy**.) Same sentence with "small" instead of "large" flips the answer to **suitcase**. Pattern-matching alone fails — you need a model of what physically can/can't fit.
+
 - **`arc_easy`** — grade-school multiple-choice science questions.
+  *Example:* "What is the main cause of earthquakes?  a) rain  b) wind  c) **movement of tectonic plates**  d) clouds." Roughly 3rd–9th-grade level science.
+
 - **`piqa`** — physical common sense.
+  *Example:* "Goal: separate egg whites from yolks.  a) **Crack the egg into your hands; let the whites slip through your fingers, leaving the yolk.**  b) Crack the egg into a glass of water; the yolk will dissolve." Tests "how do everyday objects behave" knowledge.
 
 Expect ~5-30 minutes per model on a laptop GPU for the full suite.
 
