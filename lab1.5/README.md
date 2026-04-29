@@ -30,7 +30,7 @@ total ≈ 12 · n_layer · n_embd²              (Transformer blocks)
       + (vocab_size + block_size) · n_embd  (embeddings)
 ```
 
-Each block contributes ~`12 · n_embd²` params: attention (`4 · n_embd²` — QKV projection is `3 · n_embd²`, output projection is `n_embd²`) plus MLP (`8 · n_embd²` — `fc1` is `4 · n_embd²`, `fc2` is another `4 · n_embd²`). Smaller bias and LayerNorm terms (~`13 · n_embd` per block) round out the rest.
+Each block contributes about `12 · n_embd²` params: attention (`4 · n_embd²` — QKV projection is `3 · n_embd²`, output projection is `n_embd²`), plus MLP (`8 · n_embd²` — `fc1` is `4 · n_embd²`, `fc2` is another `4 · n_embd²`). Smaller bias and LayerNorm terms (about `13 · n_embd` per block) round out the rest.
 
 Quick check for `gpt2` (124M): `12 · 12 · 768²` ≈ 85M (blocks) + `(50257 + 1024) · 768` ≈ 39M (embeddings) ≈ 124M ✓.
 
