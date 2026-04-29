@@ -20,7 +20,7 @@ Karpathy's nanoGPT ships three dataset configs (`data/<name>/prepare.py`). This 
 | --- | --- | --- | --- | --- |
 | **`shakespeare_char`** | char-level | TinyShakespeare | 1 MB | toy/debug — **what this lab matches** |
 | `shakespeare` | tiktoken (GPT-2 BPE) | TinyShakespeare | 1 MB | smallest BPE example, useful for fine-tuning |
-| `openwebtext` | tiktoken (GPT-2 BPE) | OpenWebText | ~40 GB raw, ~9 B tokens | headline GPT-2 124M reproduction |
+| `openwebtext` | tiktoken (GPT-2 BPE) | OpenWebText | ~40 GB raw, ~9 B tokens | nanoGPT's GPT-2 124M reproduction config |
 
 The same `gpt.py` architecture handles all three — they differ only in tokenizer, dataset, and training scale. Once you've trained the char-level version here, scaling up to BPE + a bigger corpus is a swap of the data-prep step, not the model.
 
