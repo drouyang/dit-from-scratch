@@ -28,22 +28,7 @@ The same `gpt.py` architecture handles all three — they differ only in tokeniz
 
 **TinyShakespeare** is ~1MB of plays from the First Folio, concatenated into one file. ~65 unique characters (uppercase + lowercase + punctuation + newline). At char-level there's no tokenizer to install — every character is a token, and the vocab is just `sorted(set(text))`.
 
-**The task**: next-character prediction. Given a context window of `block_size` previous chars, predict the next one. Train with cross-entropy on shifted sequences:
-
-```
-input  = tokens[0..L-1]
-target = tokens[1..L]
-```
-
-The causal mask ensures position `i` never sees position `i+1` during training, so each prediction is forced to depend only on the past — exactly the constraint at inference time. No train/test mismatch for autoregression.
-
-```
- tokens (B, L)  →  [embed + pos]  →  [Block × N]  →  [LN]  →  [linear head]  →  logits (B, L, vocab)
-                                       ▲
-                                  causal mask
-```
-
-**What "learning" looks like over training.** The model is **autoregressive**: it generates one token at a time, and each new token is conditioned on every token that came before it (the prompt *and* the model's own previous outputs). Given the prompt `ROMEO:` it predicts the next character, appends it, predicts the next, and so on — feeding its growing output back in as context at every step. Sampling from `"ROMEO:"` at each stage looks roughly like this (representative — your run will differ):
+The model is **autoregressive**: it generates one token at a time, and each new token is conditioned on every token that came before it (the prompt *and* the model's own previous outputs). Given the prompt `ROMEO:` it predicts the next character, appends it, predicts the next, and so on — feeding its growing output back in as context at every step. Sampling from `"ROMEO:"` at each stage looks roughly like this (representative — your run will differ):
 
 ```text
 val_loss ≈ 4.2   (random init — uniform over 65 chars)
