@@ -48,14 +48,6 @@ Put it together.
 
 **Mini text-to-image**: Latent DiT (3.2) with text conditioning (3.3), trained with flow matching (2.3) and CFG (2.2) on a small text-image dataset.
 
----
-
-## Supporting Practices
-
-- **Profiling**: `torch.profiler`, `nsys` traces, `torch.cuda.memory_summary()` — use them at least once per part.
-- **Reading**: one paper per week from the module references; read implementations after your own attempt.
-- **Writing**: a one-paragraph "what clicked" note per module.
-- **Debugging**: overfit a single batch before scaling; print `param.grad.norm()` per layer; start small.
 
 ## Reference Library
 
@@ -66,26 +58,3 @@ Put it together.
 - [Lilian Weng's blog](https://lilianweng.github.io/) — diffusion and flow-matching posts
 - Hugging Face `diffusers` source — reference implementations of DiT/SD3
 - Annotated Transformer / Annotated Diffusion
-
----
-
-## Milestones
-
-### Part 1 — Building Blocks
-- [ ] 1.1 MLP on MNIST to 98%+
-- [ ] 1.2 Small CNN autoencoder reconstructing CIFAR-10
-- [ ] 1.3 Multi-head attention matching PyTorch built-in
-- [ ] 1.4 nanoGPT trained and generating
-
-### Part 2 — Diffusion Essentials
-- [ ] 2.1 VAE with interpolatable latent space
-- [ ] 2.2 DDPM + DDIM + CFG on MNIST/CIFAR
-- [ ] 2.3 Flow matching trained and compared to DDPM
-
-### Part 3 — DiT
-- [ ] 3.1 DiT trained with class conditioning (ImageNet-subset or CIFAR)
-- [ ] 3.2 Latent DiT: VAE encode → DiT → VAE decode, end-to-end
-- [ ] 3.3 Text-conditioned DiT with CFG
-
-### Capstone
-- [ ] Mini text-to-image completed end-to-end
