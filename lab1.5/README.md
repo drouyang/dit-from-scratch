@@ -23,6 +23,19 @@ The four GPT-2 sizes are the *same architecture* with three hyperparameters scal
 | [`gpt2-large`](https://huggingface.co/gpt2-large) | 774M | 36 | 1280 | 20 | 64 | 1024 | ~3.1 GB |
 | [`gpt2-xl`](https://huggingface.co/gpt2-xl) | 1.5B | 48 | 1600 | 25 | 64 | 1024 | ~6.2 GB |
 
+**Where the params come from.**
+
+```
+total ≈ 12 · n_layer · n_embd²              (Transformer blocks)
+      + (vocab_size + block_size) · n_embd  (embeddings)
+```
+
+Each block contributes ~`12 · n_embd²` params: attention (`4 · n_embd²` — QKV projection is `3 · n_embd²`, output projection is `n_embd²`) plus MLP (`8 · n_embd²` — `fc1` is `4 · n_embd²`, `fc2` is another `4 · n_embd²`). Smaller bias and LayerNorm terms (~`13 · n_embd` per block) round out the rest.
+
+Quick check for `gpt2` (124M): `12 · 12 · 768²` ≈ 85M (blocks) + `(50257 + 1024) · 768` ≈ 39M (embeddings) ≈ 124M ✓.
+
+The embedding contribution is **fixed** across all four GPT-2 sizes (`vocab_size` and `block_size` don't change). Its share shrinks with scale — ~31% of `gpt2`, ~15% of `gpt2-medium`, ~9% of `gpt2-large`, ~6% of `gpt2-xl`. At LLaMA-70B+ scale, embeddings are rounding error and `n_layer · n_embd²` is the whole story.
+
 `block_size` is the **context window** — the maximum number of token positions the model can attend over. At each position the model produces `Q`, `K`, `V` vectors of size `n_embd`. Each of those vectors is then split into `n_head` vectors of dim `head_dim` — one per head.
 
 `head_dim = n_embd / n_head` is held constant at 64 across all four GPT-2 sizes — width grows by *adding more heads*, not bigger heads. Layers and width scale together. `head_dim` 64 was the early-era standard (original 2017 Transformer, GPT-2, BERT, ViT). Modern decoder-only LLMs at 7B+ scale — GPT-3, LLaMA-1/2/3, Mistral, Qwen, DeepSeek — moved to `head_dim = 128` for better tensor-core alignment and arithmetic intensity. Both 64 and 128 are widely used today; FlashAttention has fast paths for exactly these two values. The "right" `head_dim` is era- and scale-dependent, not a single number.
