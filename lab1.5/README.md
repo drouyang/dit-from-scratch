@@ -23,7 +23,9 @@ The four GPT-2 sizes are the *same architecture* with three hyperparameters scal
 | [`gpt2-large`](https://huggingface.co/gpt2-large) | 774M | 36 | 1280 | 20 | 64 | 1024 | ~3.1 GB |
 | [`gpt2-xl`](https://huggingface.co/gpt2-xl) | 1.5B | 48 | 1600 | 25 | 64 | 1024 | ~6.2 GB |
 
-`head_dim = 64` is held constant — width grows by *adding more heads*, not bigger heads. Layers and width scale together. All four were trained on the same WebText corpus (~40 GB), with the same BPE tokenizer (50257 tokens).
+`head_dim = n_embd / n_head` is held constant at 64 — width grows by *adding more heads*, not bigger heads. Layers and width scale together. 64 is the empirical sweet spot transformer practitioners have settled on: smaller heads (16, 32) limit each head's capacity to express a routing pattern; larger heads (128+) cost more compute without obvious gains. It has become a quasi-standard across many transformer architectures — GPT-2/3, LLaMA, BERT-base, T5, and most things you will meet.
+
+All four GPT-2 sizes were trained on the same WebText corpus (~40 GB), with the same BPE tokenizer (50257 tokens).
 
 ## How `from_pretrained` works
 
