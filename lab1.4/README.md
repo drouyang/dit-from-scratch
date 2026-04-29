@@ -209,6 +209,8 @@ def forward(self, x):
 
 Attention is a *linear* weighted average of value vectors — without an MLP between attention layers, the whole stack collapses to one big linear op (linear ∘ linear = linear). The MLP's GELU is what makes the network actually deep.
 
+#### The pre-norm sublayer pattern
+
 Before `Block` puts these two sublayers together, two more primitives are doing all the wiring: **LayerNorm** before each sublayer, and a **residual connection** around it.
 
 **LayerNorm.** Normalizes the activation vector at each position to zero mean and unit variance, then applies a learnable affine. For a single position's vector $x \in \mathbb{R}^D$:
