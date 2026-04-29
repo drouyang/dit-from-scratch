@@ -141,8 +141,10 @@ The right tool here is **EleutherAI's `lm-evaluation-harness`** — the standard
 Install:
 
 ```bash
-pip install lm-eval
+pip install lm-eval accelerate
 ```
+
+`accelerate` is required for HF's `device_map` placement (used internally by `lm-eval` to load the model onto MPS / CUDA); without it you get an `ImportError` on the first run.
 
 Run on each size:
 
