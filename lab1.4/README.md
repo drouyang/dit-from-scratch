@@ -12,6 +12,18 @@
 - `sample.py` — load a checkpoint and generate text from a prompt with adjustable temperature and top-k.
 - `demo/app.py` — Gradio webapp for interactive sampling.
 
+## Compared with nanoGPT
+
+Karpathy's nanoGPT ships three dataset configs (`data/<name>/prepare.py`). This lab matches the smallest one — char-level on TinyShakespeare, the toy/debug option. The other two are BPE-tokenized at progressively larger scales:
+
+| Name | Tokenizer | Dataset | Size | Purpose |
+| --- | --- | --- | --- | --- |
+| **`shakespeare_char`** | char-level | TinyShakespeare | 1 MB | toy/debug — **what this lab matches** |
+| `shakespeare` | tiktoken (GPT-2 BPE) | TinyShakespeare | 1 MB | smallest BPE example, useful for fine-tuning |
+| `openwebtext` | tiktoken (GPT-2 BPE) | OpenWebText | ~40 GB raw, ~9 B tokens | headline GPT-2 124M reproduction |
+
+The same `gpt.py` architecture handles all three — they differ only in tokenizer, dataset, and training scale. Once you've trained the char-level version here, scaling up to BPE + a bigger corpus is a swap of the data-prep step, not the model.
+
 ## What the model learns
 
 **TinyShakespeare** is ~1MB of plays from the First Folio, concatenated into one file. ~65 unique characters (uppercase + lowercase + punctuation + newline). At char-level there's no tokenizer to install — every character is a token, and the vocab is just `sorted(set(text))`.
