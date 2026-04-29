@@ -122,19 +122,9 @@ Two things this gets you:
 Each `Block` is **pre-norm**: LayerNorm before each sublayer, residual added after.
 
 ```
-       x  ──┬──► LN ──► MHA(causal) ──► dropout ──┐
-            │                                      ▼
-            └─────────────────────► + ◄────────────┘
-                                    │
-                             ┌──────┴──────┐
-                             │             │
-                             │             ▼
-                             │   LN ──► MLP (Linear → GELU → Linear → dropout)
-                             │             │
-                             ▼             │
-                             + ◄───────────┘
-                             │
-                             ▼  out
+x ─┬─► LN ─► MHA ─┐ ┌─► LN ─► MLP ─┐
+   │              ▼ │              ▼
+   └─────────────►⊕─┴─────────────►⊕─► out
 ```
 
 **Why pre-norm.** LayerNorm before each sublayer (instead of after) keeps an unnormalized identity path through every block. Gradients flow back through the residual at every depth without vanishing, so deep stacks train stably. Post-norm needs careful warmup to do the same — almost all modern transformers (GPT-2, LLaMA, DiT) use pre-norm.

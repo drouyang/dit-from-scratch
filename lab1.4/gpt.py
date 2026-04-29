@@ -95,13 +95,9 @@ class MLP(nn.Module):
 class Block(nn.Module):
     """One transformer block: pre-norm attention + pre-norm MLP, both residual.
 
-        x ──► LN ──► MHA(causal) ──┐
-        │                          ▼
-        └─────────► + ◄────────────┘
-                    │
-                    ├──► LN ──► MLP ──┐
-                    │                 ▼
-                    └────► + ◄────────┘  ──► out
+        x ─┬─► LN ─► MHA ─┐ ┌─► LN ─► MLP ─┐
+           │              ▼ │              ▼
+           └─────────────►⊕─┴─────────────►⊕─► out
 
     Pre-norm (LN before each sublayer, residual added after) is the modern
     standard. Residuals carry an unnormalized identity path through every
