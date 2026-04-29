@@ -18,9 +18,11 @@ The primitives DiT is made of. Skip none of these — every one shows up inside 
 |---|---|---|
 | 1.1 | MLP (warm-up) — FFN blocks, AdaLN, time embeddings | [lab1.1](./lab1.1) |
 | 1.2 | CNN basics — just enough for VAE encoder/decoder | [lab1.2](./lab1.2) |
-| 1.3 | Attention (standalone) | [lab1.3](./lab1.3) |
-| 1.4 | Transformer (nanoGPT) | [lab1.4](./lab1.4) |
+| **1.3** | **Attention (standalone)** ★ | [lab1.3](./lab1.3) |
+| **1.4** | **Transformer (nanoGPT)** ★ | [lab1.4](./lab1.4) |
 | 1.5 | GPT-2 family — load OpenAI weights, compare sizes (optional) | [lab1.5](./lab1.5) |
+
+★ = the architectural backbone of every modern transformer — DiT, GPT, LLaMA, ViT, BERT all build on these two.
 
 ## Part 2 — Diffusion Essentials
 
