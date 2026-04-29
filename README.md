@@ -2,9 +2,8 @@
 
 A hands-on path to understanding Diffusion Transformers. Build each prerequisite, then assemble a working latent-space DiT for text-to-image.
 
-- **Time**: ~6–8 weeks at 10 hrs/week
+- **Time**: 3-6 hours per module
 - **Stack**: PyTorch + MacBook Pro M3
-- **Deliverable per module**: a working notebook/script and a short "what clicked" note
 
 Each module has its own lab directory with detailed instructions (e.g. `lab1.1/` for Module 1.1).
 
