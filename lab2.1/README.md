@@ -1,0 +1,166 @@
+# Module 2.1 — VAE
+
+> Part 2 — Diffusion Essentials · [DiT from Scratch](../README.md)
+
+**Goal**: turn lab 1.2's deterministic autoencoder into a **Variational** Autoencoder by adding the two pieces that make the latent space generative — a Gaussian posterior `(mu, logvar)` and a KL term that pulls it toward `N(0, I)`. Train on MNIST, then verify the latent space is well-formed by (a) sampling `z ~ N(0, I)` → decode and (b) interpolating between two encoded digits.
+
+**Why this matters for DiT**: DiT does not operate on raw pixels. It operates on **latents produced by a VAE** — the Stable Diffusion VAE, an 8× spatial downsampler with a 4-channel latent. Diffusion learns to navigate that latent space, and the only reason it can navigate it is the VAE's KL prior: without that prior, the latent space would be a bag of disconnected points and intermediate latents (which diffusion produces at every denoising step) would decode to garbage. The KL trick you build here is the same one Stable Diffusion uses; only the encoder/decoder shapes change.
+
+**Deliverables**:
+- `vae.py` with `Encoder` (outputs `mu`, `logvar`), `Decoder`, `reparameterize`, `vae_loss`, and `VAE`.
+- `train.py` training the VAE on MNIST to a sensible ELBO (≈100 nats/image at default settings).
+- `visualize.py` producing three figures: reconstructions, samples from the prior, and a latent-space interpolation between two digits.
+
+## What the model learns
+
+**MNIST**: 28×28 grayscale digits, 60k train / 10k test. Small and clean enough that the latent space is interpretable in a single afternoon's training.
+
+The architecture is lab 1.2's encoder/decoder, with two changes:
+
+1. **The encoder outputs two vectors** instead of one — `mu` and `logvar`, the mean and log-variance of a Gaussian over the latent. We sample
+   ```
+   z = mu + sigma * eps,    eps ~ N(0, I),    sigma = exp(0.5 * logvar)
+   ```
+   This is the **reparameterization trick**: the random sample is rewritten as a deterministic function of `(mu, sigma)` plus an external noise source `eps`, so backprop can flow through `mu` and `sigma`. Sampling directly would sever the gradient.
+
+2. **The loss adds a KL term** that pulls the per-image posterior `N(mu, sigma^2)` toward the standard normal prior `N(0, I)`:
+   ```
+   L = recon(x, x̂) + beta * KL(N(mu, sigma^2) || N(0, I))
+   ```
+   For two Gaussians the KL has a closed form:
+   ```
+   KL = -0.5 * sum(1 + logvar - mu^2 - exp(logvar))
+   ```
+   Without this term the encoder is free to spread points anywhere in latent space — there's no reason for two adjacent latents to decode to similar images. With it, the latents pile up near the origin, the prior matches the aggregate posterior, and `N(0, I)` becomes a usable sampling distribution.
+
+```
+ input image                     latent                       reconstructed image
+(1, 28, 28)  →  [Encoder]  →  (mu, logvar)  →  z = mu + sigma·ε  →  [Decoder]  →  (1, 28, 28)
+                                  │
+                                  └──── KL pulls (mu, logvar) toward (0, 0)
+```
+
+`beta = 1` is standard ELBO. `beta > 1` makes the KL weight heavier — smoother latent space, blurrier reconstructions (the **β-VAE** knob). `beta < 1` is the opposite trade-off.
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `vae.py` | `Encoder` (with `mu`/`logvar` heads), `Decoder`, `reparameterize`, `vae_loss`, and the `VAE` module |
+| `train.py` | Trains the VAE on MNIST with `Adam` + the ELBO loss; reports per-epoch ELBO / recon / KL |
+| `visualize.py` | Produces three figures: reconstructions, prior samples, latent interpolations |
+
+## Instructions
+
+### 1. Set up
+
+Python 3.9+. From `lab2.1/`:
+
+```bash
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Training auto-selects device: CUDA → Apple MPS → CPU. MNIST downloads to `./data/` on first run (~12 MB).
+
+### 2. Train
+
+```bash
+python train.py
+```
+
+Default: Adam, lr=1e-3, 20 epochs, latent_dim=16, beta=1.0, batch=128. Per-epoch output:
+
+```
+epoch  1 |   5.4s | train ELBO  140.21  recon  130.42  KL  9.78 | test ELBO  108.32  recon  100.11  KL  8.21
+...
+epoch 20 |   105.2s | train ELBO   95.21  recon   75.12  KL 20.09 | test ELBO   97.43  recon   77.08  KL 20.35
+```
+
+What to watch:
+
+- **ELBO drops monotonically.** That is the model getting better at modelling pixels under the constraint that latents stay near `N(0, I)`.
+- **`recon` falls fast at first, then slows.** Reconstruction quickly learns to roughly match the digit; the slow tail is sharpening edges and strokes.
+- **`KL` rises over training.** Counter-intuitive but correct: at init, both `mu` and `logvar` are near zero, so KL is tiny. As the encoder learns to actually *use* the latent space (place different digits at different `mu`), KL grows. KL = 0 means the posterior collapsed and the latent is unused (a known VAE failure mode).
+
+### 3. The math, briefly
+
+Three ideas to lock in.
+
+**Why a sample, not just `mu`?** A deterministic autoencoder maps every image to a single point. If you decode any *other* point — say, `mu + 0.1·v` — you get nothing useful, because nothing during training trained the decoder to handle non-encoded points. The reparameterized sample injects noise *during training*, forcing the decoder to be robust around each `mu`. Combined with the KL term, this turns the latent space into a continuous manifold rather than a finite set of points.
+
+**Why `logvar`, not `sigma`?** A Linear layer can output any real value. `logvar` can be negative (small variance) or positive (large variance), no constraint needed. `sigma` would have to be strictly positive — you'd need an exp/softplus head and worry about numerical precision. Using `logvar` is the standard VAE convention and the math is cleaner: `sigma = exp(0.5 · logvar)`.
+
+**Why `beta`?** Different tasks want different priors. For pure generative quality you want `beta = 1` (the proper ELBO). For learning *disentangled* latent dimensions you want `beta > 1` (β-VAE: each dim of `z` ends up encoding a single semantic factor, at the cost of recon quality). For sharp reconstructions only, `beta < 1` (relaxes the KL pressure). The Stable Diffusion VAE uses `beta ≈ 1e-6` — a tiny KL weight, because the diffusion model on top of it provides most of the regularization. We default to `beta = 1` because it's the textbook setup.
+
+### 4. Reconstruct, sample, interpolate
+
+```bash
+python visualize.py --mode all
+```
+
+This produces three figures in `lab2.1/`:
+
+- `reconstructions.png` — top row originals, bottom row VAE reconstructions. Should look like blurry-but-recognizable digits. Reconstruction quality is similar to lab 1.2's autoencoder; the VAE does not reconstruct *better* than an autoencoder. The point of the VAE is what the latent space *can do*, not how well it reconstructs.
+- `samples.png` — 64 digits decoded from `z ~ N(0, I)`. **This is the strictest test of the KL term.** A trained VAE produces plausible digits here. An autoencoder without KL would produce noise: random points in its latent space don't correspond to anything the decoder was trained on.
+- `interpolation.png` — two random test digits at the ends, eight intermediate frames in between. Walking linearly between `mu_a` and `mu_b` should morph smoothly through digit shapes. Without the KL prior, the line between two valid latents passes through "off-manifold" regions and the intermediate frames look like noise.
+
+To run a single visualization:
+
+```bash
+python visualize.py --mode reconstruct --n 12
+python visualize.py --mode sample
+python visualize.py --mode interpolate --n 16
+```
+
+### 5. Experiment with `beta`
+
+Train three models at different KL weights and compare:
+
+```bash
+python train.py --beta 0.1 --save-path vae_beta0.1.pt
+python train.py --beta 1.0 --save-path vae_beta1.pt   # default
+python train.py --beta 4.0 --save-path vae_beta4.pt
+```
+
+Then visualize each:
+
+```bash
+python visualize.py --ckpt vae_beta0.1.pt --save-prefix beta0.1_
+python visualize.py --ckpt vae_beta1.pt   --save-prefix beta1_
+python visualize.py --ckpt vae_beta4.pt   --save-prefix beta4_
+```
+
+What to look for:
+
+- **`beta=0.1` reconstructions are sharpest** but **prior samples look worst** — the latent space is barely regularized, so `N(0, I)` is mostly off-manifold.
+- **`beta=4.0` prior samples look smoothest** but **reconstructions are blurrier** — the encoder is so squeezed toward `N(0, I)` that fine detail can't survive the bottleneck.
+- **`beta=1.0` is the balanced default**.
+
+The trade-off — recon quality vs latent-space quality — is the whole reason the β-VAE knob exists.
+
+### 6. Experiment with `latent_dim`
+
+```bash
+python train.py --latent-dim 2   --save-path vae_z2.pt    # extreme bottleneck
+python train.py --latent-dim 16  --save-path vae_z16.pt   # default
+python train.py --latent-dim 64  --save-path vae_z64.pt
+```
+
+`latent_dim=2` is so tight that you can plot the entire latent space on a 2-D scatter, color-coded by digit class — a classic VAE figure. Reconstructions at `latent_dim=2` are markedly blurrier (most digit information cannot fit through 2 numbers), but interpolations are particularly clean because the manifold is dense in 2-D.
+
+## Discussion
+
+**Why the VAE is the right setup for diffusion.** A diffusion model is trained to denoise. At any intermediate step it produces a latent that is *not* one of the training latents — it's somewhere on the noise-to-data trajectory. For diffusion to work, "somewhere in between" has to be a valid place in latent space. The VAE's KL prior is precisely what guarantees that: the latent space is a continuous manifold, not a point cloud. The interpolations you produce in this lab are a small-scale demonstration of the same property diffusion relies on at every denoising step.
+
+**What changes for DiT.** Stable Diffusion's VAE differs from this one in three operational ways but is conceptually identical:
+
+| Property | This lab | Stable Diffusion VAE |
+|---|---|---|
+| Input | 28×28×1 (grayscale) | typically 256×256×3 (RGB) |
+| Latent | flat 16-dim vector | spatial: `(4, 32, 32)` for a 256×256 input — 8× spatial downsampling, 4 channels |
+| `beta` | 1.0 (textbook ELBO) | ≈ `1e-6` (tiny — diffusion provides the regularization) |
+| Decoder loss | BCE on Bernoulli pixels | reconstruction (MSE/L1) + perceptual (LPIPS) + adversarial (PatchGAN) |
+| Training | minutes on a laptop | days on a multi-GPU cluster |
+
+The encoder/decoder, posterior `(mu, logvar)`, reparameterization trick, KL term — all of them carry over unchanged. When DiT eventually loads Stable Diffusion's VAE to encode images for the diffusion model, it is using the same compute graph you wrote here; just bigger and trained on far more data.
