@@ -1,36 +1,90 @@
-# Decoder-only transformer (GPT), built by stacking lab 1.3's MultiHeadAttention.
+# Decoder-only transformer (GPT), using PyTorch's built-in attention kernel.
 #
 # This file defines WHAT the model computes.
 # train.py defines HOW it is trained on TinyShakespeare.
 # sample.py loads a checkpoint and generates text.
 #
 # The pieces:
+#   CausalSelfAttention          — multi-head self-attention with causal mask,
+#                                  via F.scaled_dot_product_attention
 #   MLP(embed_dim)               — position-wise feed-forward sublayer
-#   Block(embed_dim, num_heads)  — pre-norm: LN → MHA(causal) → +res, LN → MLP → +res
+#   Block(embed_dim, num_heads)  — pre-norm: LN → attn → +res, LN → MLP → +res
 #   GPT(...)                     — embed + N Blocks + final LN + linear head
 #
+# Why we use PyTorch's built-in attention here:
+#   In lab 1.3 you wrote scaled_dot_product_attention from scratch and
+#   proved it bit-for-bit equivalent to torch.nn.MultiheadAttention. Now
+#   that the math is yours, there's no reason to re-invoke the from-scratch
+#   version — PyTorch's `F.scaled_dot_product_attention` dispatches to
+#   Flash Attention on supported hardware (fused softmax+matmul, lower
+#   memory, faster). Same kernel; better wrapper.
+#
 # Why this matters for DiT:
-#   A DiT block is structurally identical to a GPT block — multi-head attention
-#   plus an MLP, both wrapped in pre-norm + residual. The only DiT-specific
+#   A DiT block is structurally identical to a GPT block — attention plus
+#   an MLP, both wrapped in pre-norm + residual. The only DiT-specific
 #   thing is AdaLN-Zero modulation of the LayerNorms from a conditioning
-#   vector. Get the GPT block right here; DiT is "this block, but with image
-#   patches instead of text tokens, and a modulated LN."
+#   vector. Get the GPT block right here; DiT is "this block, but with
+#   image patches instead of text tokens, and a modulated LN."
 
 import math
-import sys
-from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Reuse the MultiHeadAttention you wrote (and verified bit-for-bit against
-# torch.nn.MultiheadAttention) in lab 1.3. The directory name `lab1.3` has a
-# dot in it, which would break a normal `import lab1.3.attention` — but we're
-# adding the directory to sys.path and importing the file by its module name
-# (`attention.py` -> `import attention`), which works fine.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lab1.3"))
-from attention import MultiHeadAttention, causal_mask  # noqa: E402
+
+class CausalSelfAttention(nn.Module):
+    """Multi-head causal self-attention via F.scaled_dot_product_attention.
+
+    Layout follows the standard nanoGPT style: one packed QKV linear
+    (`c_attn`, shape `(embed_dim, 3*embed_dim)`) and one output projection
+    (`c_proj`, shape `(embed_dim, embed_dim)`). The causal mask is applied
+    inside the kernel via `is_causal=True` — no need to materialize an
+    `(L, L)` boolean tensor.
+
+    The attention math is exactly what you wrote in lab 1.3:
+        attn = softmax(Q Kᵀ / sqrt(d_k))   (with causal mask)
+        out  = attn @ V
+    PyTorch just runs it as a single fused kernel.
+    """
+
+    def __init__(self, embed_dim, num_heads, dropout=0.1):
+        super().__init__()
+        assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        # Packed Q/K/V projection — one matmul instead of three.
+        self.c_attn = nn.Linear(embed_dim, 3 * embed_dim)
+        # Output projection — mixes heads back into the residual stream.
+        self.c_proj = nn.Linear(embed_dim, embed_dim)
+        self.resid_dropout = nn.Dropout(dropout)
+        self.dropout_p = dropout
+
+    def forward(self, x):
+        B, L, D = x.shape
+        H, Dh = self.num_heads, self.head_dim
+
+        # 1) One packed QKV projection; split into three (B, L, D) tensors.
+        q, k, v = self.c_attn(x).split(D, dim=-1)
+
+        # 2) Reshape for multi-head: (B, L, D) -> (B, H, L, Dh).
+        q = q.view(B, L, H, Dh).transpose(1, 2)
+        k = k.view(B, L, H, Dh).transpose(1, 2)
+        v = v.view(B, L, H, Dh).transpose(1, 2)
+
+        # 3) Fused attention. is_causal=True applies the upper-triangular
+        #    mask internally; dropout_p is applied to attention weights.
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            dropout_p=self.dropout_p if self.training else 0.0,
+            is_causal=True,
+        )
+
+        # 4) Merge heads back: (B, H, L, Dh) -> (B, L, D).
+        out = out.transpose(1, 2).contiguous().view(B, L, D)
+
+        # 5) Output projection + residual dropout.
+        return self.resid_dropout(self.c_proj(out))
 
 
 class MLP(nn.Module):
@@ -73,14 +127,14 @@ class Block(nn.Module):
     def __init__(self, embed_dim, num_heads, dropout=0.1):
         super().__init__()
         self.ln1 = nn.LayerNorm(embed_dim)
-        self.attn = MultiHeadAttention(embed_dim, num_heads)
+        self.attn = CausalSelfAttention(embed_dim, num_heads, dropout=dropout)
         self.ln2 = nn.LayerNorm(embed_dim)
         self.mlp = MLP(embed_dim, dropout=dropout)
-        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, attn_mask=None):
-        attn_out, _ = self.attn(self.ln1(x), attn_mask=attn_mask)
-        x = x + self.dropout(attn_out)
+    def forward(self, x):
+        # Causal mask lives inside CausalSelfAttention (is_causal=True),
+        # so the block doesn't need to know about it.
+        x = x + self.attn(self.ln1(x))
         x = x + self.mlp(self.ln2(x))
         return x
 
@@ -117,11 +171,11 @@ class GPT(nn.Module):
 
         self.apply(self._init_weights)
         # GPT-2 trick: scale residual-projection inits by 1/sqrt(2*n_layer).
-        # Each block adds two residual contributions (attn out_proj, mlp fc2);
+        # Each block adds two residual contributions (attn c_proj, mlp fc2);
         # without this rescaling, activation variance grows linearly with
         # depth and deep stacks become unstable.
         for p_name, p in self.named_parameters():
-            if p_name.endswith("out_proj.weight") or p_name.endswith("fc2.weight"):
+            if p_name.endswith("c_proj.weight") or p_name.endswith("fc2.weight"):
                 nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * n_layer))
 
     def _init_weights(self, module):
@@ -140,10 +194,10 @@ class GPT(nn.Module):
         x = self.token_embed(idx) + self.pos_embed(pos)
         x = self.drop(x)
 
-        # One causal mask, reused across all blocks.
-        mask = causal_mask(L, device=idx.device)
+        # Causal masking is handled inside each block's attention sublayer
+        # (F.scaled_dot_product_attention with is_causal=True).
         for block in self.blocks:
-            x = block(x, attn_mask=mask)
+            x = block(x)
         x = self.ln_f(x)
         logits = self.head(x)
 

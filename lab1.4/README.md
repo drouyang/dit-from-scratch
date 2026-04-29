@@ -2,12 +2,12 @@
 
 > Part 1 — Building Blocks · [DiT from Scratch](../README.md)
 
-**Goal**: stack the multi-head attention you wrote (and verified) in lab 1.3 with MLPs, layer norms, and residuals to get a real decoder-only transformer. Train it as a character-level language model on TinyShakespeare and generate plausible Shakespeare from a prompt.
+**Goal**: stack causal self-attention with MLPs, layer norms, and residuals to get a real decoder-only transformer. Train it as a character-level language model on TinyShakespeare and generate plausible Shakespeare from a prompt. Now that you've proved the attention kernel from-scratch in lab 1.3, this lab uses PyTorch's built-in `F.scaled_dot_product_attention` directly — same math, faster wrapper.
 
 **Why this matters for DiT**: a DiT block is structurally identical to a GPT block — multi-head attention plus an MLP, both wrapped in pre-norm + residual. The only DiT-specific addition is AdaLN-Zero conditioning, which modulates the LayerNorms from a timestep + class embedding. Get the GPT block right here and DiT becomes "this exact block, but with image patches instead of text tokens, and conditioning on the LN."
 
 **Deliverables**:
-- `gpt.py` — `Block` (LN → MHA(causal) → +res, LN → MLP → +res), `GPT` (embed → N blocks → final LN → linear head), and a `generate` method.
+- `gpt.py` — `CausalSelfAttention` (using `F.scaled_dot_product_attention(..., is_causal=True)`), `Block` (LN → attn → +res, LN → MLP → +res), `GPT` (embed → N blocks → final LN → linear head), and a `generate` method.
 - `train.py` — auto-downloads TinyShakespeare, trains char-level GPT, periodically samples from the model so you can watch the text get more coherent over training.
 - `sample.py` — load a checkpoint and generate text from a prompt with adjustable temperature and top-k.
 - `demo/app.py` — Gradio webapp for interactive sampling.
@@ -47,7 +47,7 @@ Reaching val loss ≈ 1.3 in 5000 steps on the default config typically gives Sh
 
 | File | What it is |
 | --- | --- |
-| `gpt.py` | `MLP`, `Block`, `GPT` (with weight tying + GPT-2 init); imports `MultiHeadAttention` and `causal_mask` from `lab1.3/attention.py` — your verified kernel |
+| `gpt.py` | `CausalSelfAttention`, `MLP`, `Block`, `GPT` (with weight tying + GPT-2 init). Attention via `F.scaled_dot_product_attention` with `is_causal=True` |
 | `train.py` | Downloads TinyShakespeare, trains with AdamW + cosine schedule + grad clip, prints samples every 1000 steps |
 | `sample.py` | Loads checkpoint, generates from a prompt with temperature and top-k |
 | `demo/app.py` | Gradio webapp — type a prompt, see the completion |
@@ -65,21 +65,29 @@ pip install -r requirements.txt
 
 Training auto-selects device: CUDA → Apple MPS → CPU. The dataset auto-downloads on first run (~1MB).
 
-### 2. The architecture, by reuse
+### 2. Use PyTorch's built-in attention kernel
 
-`gpt.py` deliberately reuses what you already built:
+In lab 1.3 you wrote `scaled_dot_product_attention` from scratch and proved it bit-for-bit equivalent to `torch.nn.MultiheadAttention` (forward, causal-masked, *and* backward). Now that the math is yours, there's no reason to keep using your own implementation in this lab — `gpt.py` calls PyTorch's built-in directly:
 
 ```python
-sys.path.insert(0, "../lab1.3")
-from attention import MultiHeadAttention, causal_mask
+out = F.scaled_dot_product_attention(
+    q, k, v,
+    dropout_p=self.dropout_p if self.training else 0.0,
+    is_causal=True,
+)
 ```
 
-The same `MultiHeadAttention` whose forward and backward passes you proved bit-for-bit equivalent to PyTorch's built-in (lab 1.3 / `verify.py`) is now the attention sublayer of every transformer block in this lab. Lab 1.3 trained it on a toy task to see the *kernel* learn; lab 1.4 trains it inside a real architecture to see the *system* learn.
+Two things this gets you:
 
-| Lab | Mask | Task | What attention learns |
-| --- | --- | --- | --- |
-| 1.3 | none | reverse | positional routing — anti-diagonal attention |
-| 1.4 | causal | next-char | content-based routing over past tokens |
+- **Speed.** PyTorch's built-in dispatches to **Flash Attention** on supported hardware (CUDA, MPS) — fused softmax+matmul that runs in less memory and faster than a naïve unfused implementation. Same mathematical result, much better wall-clock.
+- **Less plumbing.** `is_causal=True` applies the upper-triangular mask inside the kernel, with no need to materialize an `(L, L)` boolean tensor or pass it through every block.
+
+The lab 1.3 → 1.4 progression is therefore "first verify the kernel is correct from scratch, then trust PyTorch's optimized version of the same kernel." This is exactly what production code does — you write the math once to prove you understand it, then use the library implementation.
+
+| Lab | Implementation | Mask | Task | What attention learns |
+| --- | --- | --- | --- | --- |
+| 1.3 | from-scratch + parity check | none | reverse | positional routing — anti-diagonal attention |
+| 1.4 | `F.scaled_dot_product_attention` | causal | next-char | content-based routing over past tokens |
 
 ### 3. Block structure
 
