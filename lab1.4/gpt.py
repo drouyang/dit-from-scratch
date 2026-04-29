@@ -225,10 +225,22 @@ class GPT(nn.Module):
             #   T = 1:  the model's raw distribution
             #   T → ∞:  logits → 0, distribution → uniform (pure random)
             logits = logits[:, -1, :] / temperature
+            # Top-k: keep the k highest-scoring tokens, set the rest to -inf
+            # so they get probability 0 after softmax. Cuts the long tail of
+            # unlikely candidates so a bad random draw can't derail generation.
+            #
+            # Walk-through with V=8, k=3:
+            #   logits = [ 5.0, -1.0,  8.0,  2.0,  9.0,  0.0,  6.0,  3.0]
+            #   top 3   = [9.0, 8.0, 6.0]            (v, sorted descending)
+            #   cutoff  = 6.0                         (v[:, [-1]], the k-th)
+            #   logits = [-inf, -inf,  8.0, -inf,  9.0, -inf,  6.0, -inf]
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float("inf")
             probs = F.softmax(logits, dim=-1)
+            # The random draw is what gives generation diversity; argmax here
+            # would loop on common phrases. Temperature + top-k above shape
+            # the distribution; this is the unbiased dice roll at the end.
             next_token = torch.multinomial(probs, num_samples=1)
             idx = torch.cat([idx, next_token], dim=1)
         return idx
