@@ -305,14 +305,46 @@ Two properties worth pausing on:
 `GPT.generate` is the entire inference algorithm:
 
 ```python
+# idx is the running token sequence. On entry it's the prompt; every
+# iteration appends one freshly sampled token via torch.cat, so L grows
+# by 1 each step. After max_new_tokens iterations idx has length
+# prompt_len + max_new_tokens and is what we return.
 for _ in range(max_new_tokens):
-    idx_cond = idx[:, -self.block_size:]   # crop running context to block_size
-    logits, _ = self(idx_cond)              # forward pass over the full prefix
-    logits = logits[:, -1, :] / temperature # last position only, temperature-scaled
+    # idx_cond is idx truncated to the last block_size tokens — the
+    # actual input to the model this step. Anything older falls off
+    # the front of the context window.
+    idx_cond = idx[:, -self.block_size:]
+    # In PyTorch, calling a module instance (self(x)) invokes
+    # nn.Module.__call__, which runs hooks then calls self.forward(x).
+    logits, _ = self(idx_cond)
+    # The logits at position i are the model's prediction for the token
+    # at position i+1. Positions 0..L-2 predict tokens we already have
+    # — useful for computing training loss, useless for generation.
+    # The model just did a full forward pass over L positions but we
+    # throw away L-1 of them. Production code would use a KV cache so
+    # each step costs O(L) instead of O(L²).
+    #
+    # Temperature rescales the logits before softmax:
+    #   T → 0:  distribution → one-hot on argmax (greedy/deterministic)
+    #   T = 1:  the model's raw distribution
+    #   T → ∞:  logits → 0, distribution → uniform (pure random)
+    logits = logits[:, -1, :] / temperature
+    # Top-k: keep the k highest-scoring tokens, set the rest to -inf
+    # so they get probability 0 after softmax. Cuts the long tail of
+    # unlikely candidates so a bad random draw can't derail generation.
+    #
+    # Walk-through with V=8, k=3:
+    #   logits = [ 5.0, -1.0,  8.0,  2.0,  9.0,  0.0,  6.0,  3.0]
+    #   top 3   = [9.0, 8.0, 6.0]            (v, sorted descending)
+    #   cutoff  = 6.0                         (v[:, [-1]], the k-th)
+    #   logits = [-inf, -inf,  8.0, -inf,  9.0, -inf,  6.0, -inf]
     if top_k is not None:
         v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
         logits[logits < v[:, [-1]]] = -float("inf")
     probs = F.softmax(logits, dim=-1)
+    # The random draw is what gives generation diversity; argmax here
+    # would loop on common phrases. Temperature + top-k above shape
+    # the distribution; this is the unbiased dice roll at the end.
     next_token = torch.multinomial(probs, num_samples=1)
     idx = torch.cat([idx, next_token], dim=1)
 return idx
