@@ -256,7 +256,15 @@ x = x + self.attn(self.ln1(x))   # residual + (LN → attention)
 x = x + self.mlp(self.ln2(x))    # residual + (LN → MLP)
 ```
 
-That's the entire block. Two properties worth pausing on:
+That's the entire block.
+
+```
+x ─┬─► LN ─► MHA ─┐ ┌─► LN ─► MLP ─┐
+   │              ▼ │              ▼
+   └─────────────►⊕─┴─────────────►⊕─► out
+```
+
+Two properties worth pausing on:
 - **The residual path is never normalized.** LayerNorm sits *before* each sublayer, not on the skip connection — so an unnormalized identity flows through every block, and gradients reach early layers without vanishing.
 - **The block doesn't know it's causal.** The mask lives inside `CausalSelfAttention` via `is_causal=True`. Swap the attention sublayer for a bidirectional one and you have the ViT/DiT block — same shape, no other changes needed.
 
