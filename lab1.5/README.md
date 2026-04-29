@@ -18,10 +18,10 @@ The four GPT-2 sizes are the *same architecture* with three hyperparameters scal
 
 | Name | Params | `n_layer` | `n_embd` | `n_head` | `head_dim` | `block_size` | fp32 size |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `gpt2` | 124M | 12 | 768 | 12 | 64 | 1024 | ~500 MB |
-| `gpt2-medium` | 355M | 24 | 1024 | 16 | 64 | 1024 | ~1.4 GB |
-| `gpt2-large` | 774M | 36 | 1280 | 20 | 64 | 1024 | ~3.1 GB |
-| `gpt2-xl` | 1.5B | 48 | 1600 | 25 | 64 | 1024 | ~6.2 GB |
+| [`gpt2`](https://huggingface.co/gpt2) | 124M | 12 | 768 | 12 | 64 | 1024 | ~500 MB |
+| [`gpt2-medium`](https://huggingface.co/gpt2-medium) | 355M | 24 | 1024 | 16 | 64 | 1024 | ~1.4 GB |
+| [`gpt2-large`](https://huggingface.co/gpt2-large) | 774M | 36 | 1280 | 20 | 64 | 1024 | ~3.1 GB |
+| [`gpt2-xl`](https://huggingface.co/gpt2-xl) | 1.5B | 48 | 1600 | 25 | 64 | 1024 | ~6.2 GB |
 
 `head_dim = 64` is held constant — width grows by *adding more heads*, not bigger heads. Layers and width scale together. All four were trained on the same WebText corpus (~40 GB), with the same BPE tokenizer (50257 tokens).
 
