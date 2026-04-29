@@ -4,7 +4,7 @@
 
 **Goal**: stack causal self-attention with MLPs, layer norms, and residuals to get a real decoder-only transformer. Train it as a character-level language model on TinyShakespeare and generate plausible Shakespeare from a prompt. Now that you've proved the attention kernel from-scratch in lab 1.3, this lab uses PyTorch's built-in `F.scaled_dot_product_attention` directly — same math, faster wrapper.
 
-**Why this matters for DiT**: a DiT block is structurally identical to a GPT block — multi-head attention plus an MLP, both wrapped in pre-norm + residual. The only DiT-specific addition is AdaLN-Zero conditioning, which modulates the LayerNorms from a timestep + class embedding. Get the GPT block right here and DiT becomes "this exact block, but with image patches instead of text tokens, and conditioning on the LN."
+**Why this matters for DiT**: a DiT block is structurally identical to a GPT block — multi-head attention plus an MLP, both wrapped in pre-norm + residual. The only DiT-specific addition is **AdaLN-Zero conditioning** (covered in lab 3.1).
 
 **Deliverables**:
 - `gpt.py` — `CausalSelfAttention` (using `F.scaled_dot_product_attention(..., is_causal=True)`), `Block` (LN → attn → +res, LN → MLP → +res), `GPT` (embed → N blocks → final LN → linear head), and a `generate` method.
