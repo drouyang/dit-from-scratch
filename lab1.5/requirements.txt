@@ -1,0 +1,4 @@
+torch>=2.1
+numpy<2.4
+transformers>=4.30
+tiktoken>=0.5
