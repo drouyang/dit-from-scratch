@@ -192,6 +192,40 @@ python app.py   # opens http://127.0.0.1:7860
 
 Type a prompt and play with the sliders. Watch how temperature changes the output's character — at 0.3 the model loops on common phrases; at 1.5 it invents new pseudo-Elizabethan words.
 
+## Study the source code
+
+The whole lab is ~500 lines across three files. Read them top-to-bottom in this order — each one is short enough to hold in your head all at once.
+
+### `gpt.py` (233 lines) — the model
+
+Read the four classes in order; each builds on the previous one.
+
+- **`CausalSelfAttention`** (`gpt.py:36`) — projects `x` to Q, K, V with one fused linear, splits into heads, calls `F.scaled_dot_product_attention(..., is_causal=True)`, and projects back. The whole multi-head attention layer is ~25 lines because the kernel is one function call. Compare against your hand-rolled version in lab 1.3 to see what the wrapper hides.
+- **`MLP`** (`gpt.py:90`) — `Linear(n_embd, 4*n_embd) → GELU → Linear(4*n_embd, n_embd) → Dropout`. The 4× expansion is convention from the original Transformer paper; nothing in the math requires it, but every modern LLM keeps it.
+- **`Block`** (`gpt.py:110`) — pre-norm wiring: `x = x + attn(LN(x))` then `x = x + mlp(LN(x))`. This is the *unit* the rest of deep learning is built out of. Note how the residual paths never pass through a LayerNorm — that's what makes "pre-norm" pre-norm.
+- **`GPT`** (`gpt.py:142`) — embed tokens + positions, stack N blocks, final LayerNorm, linear head. Three details worth pausing on:
+  - **Weight tying** at `gpt.py:170` — `self.head.weight = self.token_embed.weight`. One line, makes the input embedding and output projection share parameters.
+  - **GPT-2 residual init scaling** at `gpt.py:173-179` — projections that feed into a residual stream are initialized with std `0.02 / sqrt(2 * n_layer)` to keep activation variance flat through depth.
+  - **`generate`** at `gpt.py:212` — the autoregressive sampling loop. Crops context to `block_size`, applies temperature and top-k, samples one token, appends, repeats. This is the entire inference algorithm.
+
+### `train.py` (200 lines) — the training loop
+
+- **`get_batch`** (`train.py:74`) — picks `batch_size` random offsets into the token tensor, slices `block_size` chars at each, returns `(x, y)` where `y` is `x` shifted by one. This is the *whole* dataset pipeline for char-level — no DataLoader, no collation, just slicing.
+- **`estimate_loss`** (`train.py:85`) — eval-mode forward over fixed-size train and val splits. Called every `--eval-every` steps so the printed losses are stable averages rather than single-batch noise.
+- **`cosine_lr`** (`train.py:100`) — linear warmup for `--warmup` steps, then cosine decay from `max_lr` to `min_lr` over the remaining steps. Boring but standard.
+- **`main`** (`train.py:110`) — the actual loop: build model → AdamW with `(0.9, 0.95)` betas and `weight_decay=0.1` → for each step, set LR by schedule, forward, backward, clip grads at 1.0, step. Every `--sample-every` steps it generates 200 chars from the model and prints them so you can watch the text get more coherent in real time.
+
+### `sample.py` (61 lines) — load + generate
+
+The whole file is checkpoint loading + a thin CLI around `model.generate`. Read it once to see how a trained checkpoint is reconstructed (`state_dict`, `config`, `stoi`/`itos` for the char vocab) and how the same `generate` method from `gpt.py` is reused at inference time.
+
+### Suggested exercises
+
+- **Print attention weights.** Modify `CausalSelfAttention.forward` to also return the attention pattern (you'll need to call the unfused version, since `F.scaled_dot_product_attention` doesn't expose them). Visualize for a generated sequence — at later layers you should see attention concentrated on semantically relevant earlier tokens.
+- **Disable weight tying.** Comment out `gpt.py:170` and retrain. Compare final val loss and parameter count.
+- **Swap to post-norm.** Move the LayerNorm in `Block.forward` to *after* each sublayer. Watch the loss curve — it'll be much less stable, and may need warmup tuning to converge at all.
+- **Larger context.** Bump `--block-size` from 256 to 512. Memory and time per step roughly double; val loss should drop.
+
 ## Discussion
 
 **Why this is "a transformer block," not just attention.** The composable unit of every modern LLM (and DiT) is the *block*: pre-norm attention + pre-norm MLP, both residual. Once you have one block, you stack N of them — that's the whole architecture. Everything in DiT, ViT, GPT, BERT, and LLaMA is variations on what each sublayer does to the per-token residual stream.
