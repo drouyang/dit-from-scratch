@@ -23,7 +23,9 @@ The four GPT-2 sizes are the *same architecture* with three hyperparameters scal
 | [`gpt2-large`](https://huggingface.co/gpt2-large) | 774M | 36 | 1280 | 20 | 64 | 1024 | ~3.1 GB |
 | [`gpt2-xl`](https://huggingface.co/gpt2-xl) | 1.5B | 48 | 1600 | 25 | 64 | 1024 | ~6.2 GB |
 
-`head_dim = n_embd / n_head` is held constant at 64 — width grows by *adding more heads*, not bigger heads. Layers and width scale together. 64 is the empirical sweet spot transformer practitioners have settled on: smaller heads (16, 32) limit each head's capacity to express a routing pattern; larger heads (128+) cost more compute without obvious gains. It has become a quasi-standard across many transformer architectures — GPT-2/3, LLaMA, BERT-base, T5, and most things you will meet.
+`block_size` is the **context window** — the maximum number of token positions the model can attend over. At each position the model produces `Q`, `K`, `V` vectors of size `n_embd`. Each of those vectors is then split into `n_head` vectors of dim `head_dim` — one per head.
+
+`head_dim = n_embd / n_head` is held constant at 64 across all four GPT-2 sizes — width grows by *adding more heads*, not bigger heads. Layers and width scale together. `head_dim` 64 was the early-era standard (original 2017 Transformer, GPT-2, BERT, ViT). Modern decoder-only LLMs at 7B+ scale — GPT-3, LLaMA-1/2/3, Mistral, Qwen, DeepSeek — moved to `head_dim = 128` for better tensor-core alignment and arithmetic intensity. Both 64 and 128 are widely used today; FlashAttention has fast paths for exactly these two values. The "right" `head_dim` is era- and scale-dependent, not a single number.
 
 All four GPT-2 sizes were trained on the same WebText corpus (~40 GB), with the same BPE tokenizer (50257 tokens).
 
