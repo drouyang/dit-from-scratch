@@ -43,17 +43,7 @@ The causal mask ensures position `i` never sees position `i+1` during training, 
                                   causal mask
 ```
 
-**What "learning" looks like over training**:
-
-| val_loss | what the model has learned |
-| --- | --- |
-| ≈ 4.2 | random over 65 chars (entropy of uniform distribution) |
-| ≈ 3.0 | unigram — letter and space frequencies |
-| ≈ 2.0 | bigrams + spacing — words have plausible character transitions; spaces and newlines fall in plausible places |
-| ≈ 1.5 | actual English words; speaker names ("ROMEO:") capitalized correctly |
-| ≈ 1.3 | short phrases, archaic English ("thou", "thee", "wherefore"), turn-taking dialogue patterns |
-
-The model is **autoregressive**: it generates one token at a time, and each new token is conditioned on every token that came before it (the prompt *and* the model's own previous outputs). Given the prompt `ROMEO:` it predicts the next character, appends it, predicts the next, and so on — feeding its growing output back in as context at every step. Sampling from `"ROMEO:"` at each stage looks roughly like this (representative — your run will differ):
+**What "learning" looks like over training.** The model is **autoregressive**: it generates one token at a time, and each new token is conditioned on every token that came before it (the prompt *and* the model's own previous outputs). Given the prompt `ROMEO:` it predicts the next character, appends it, predicts the next, and so on — feeding its growing output back in as context at every step. Sampling from `"ROMEO:"` at each stage looks roughly like this (representative — your run will differ):
 
 ```text
 val_loss ≈ 4.2   (random init — uniform over 65 chars)
