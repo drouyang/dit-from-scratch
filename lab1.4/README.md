@@ -190,22 +190,53 @@ Two ideas hold up the whole lab — the **transformer block** and the **sampling
 
 Build it from the inside out. Each piece below assumes the one above.
 
-**`CausalSelfAttention`** (`gpt.py:21`) — one packed linear projects `x` into Q, K, V (`gpt.py:42`), splits into `n_head` heads (`gpt.py:56-58`), calls `F.scaled_dot_product_attention(q, k, v, is_causal=True)` (`gpt.py:62`), merges heads back, and projects to the residual stream (`gpt.py:72`). Compare to your hand-rolled version in lab 1.3 — the math is identical; the fused kernel is just faster and skips materializing the `(L, L)` mask.
+**`CausalSelfAttention`** — one packed linear projects `x` into Q, K, V; reshape into `n_head` heads; fused causal attention; merge and project back:
 
-**`MLP`** (`gpt.py:75`) — `Linear(D, 4D) → GELU → Linear(4D, D) → Dropout`. Position-wise: applied independently at every sequence position. Attention is a *linear* weighted average of value vectors — without an MLP between attention layers, the whole stack collapses to one big linear op (linear ∘ linear = linear). The MLP's GELU is what makes the network actually deep.
+```python
+q, k, v = self.c_attn(x).split(D, dim=-1)
+q = q.view(B, L, H, Dh).transpose(1, 2)
+k = k.view(B, L, H, Dh).transpose(1, 2)
+v = v.view(B, L, H, Dh).transpose(1, 2)
+
+out = F.scaled_dot_product_attention(
+    q, k, v,
+    dropout_p=self.dropout_p if self.training else 0.0,
+    is_causal=True,
+)
+out = out.transpose(1, 2).contiguous().view(B, L, D)
+return self.resid_dropout(self.c_proj(out))
+```
+
+Compare to your hand-rolled version in lab 1.3 — the math is identical; the fused kernel is just faster and skips materializing the `(L, L)` mask.
+
+**`MLP`** — `Linear(D, 4D) → GELU → Linear(4D, D) → Dropout`, applied independently at every sequence position:
+
+```python
+def forward(self, x):
+    return self.dropout(self.fc2(F.gelu(self.fc1(x))))
+```
+
+Attention is a *linear* weighted average of value vectors — without an MLP between attention layers, the whole stack collapses to one big linear op (linear ∘ linear = linear). The MLP's GELU is what makes the network actually deep.
 
 Before `Block` puts these two sublayers together, two more primitives are doing all the wiring: **LayerNorm** before each sublayer, and a **residual connection** around it.
 
-**LayerNorm.** Normalizes the activation vector at each position to zero mean and unit variance, then applies a learnable affine. For a single position's vector `x ∈ ℝᴰ`:
+**LayerNorm.** Normalizes the activation vector at each position to zero mean and unit variance, then applies a learnable affine. For a single position's vector $x \in \mathbb{R}^D$:
 
-```python
-mu  = x.mean(dim=-1, keepdim=True)            # mean across embedding dim
-var = x.var(dim=-1, unbiased=False, keepdim=True)
-x_hat = (x - mu) / (var + eps).sqrt()
-out   = gamma * x_hat + beta                  # gamma, beta learned, shape (D,)
-```
+$$
+\mu = \frac{1}{D}\sum_{i=1}^{D} x_i
+\qquad
+\sigma^2 = \frac{1}{D}\sum_{i=1}^{D} (x_i - \mu)^2
+$$
 
-In `gpt.py` this is one line — `self.ln1 = nn.LayerNorm(embed_dim)`. The crucial property: it normalizes across the embedding dimension *for every (batch, position) independently*. No information leaks across positions, so it composes cleanly with causal attention (unlike BatchNorm, which would). Why before each sublayer? Initialization sets the input variance well, but training drifts; normalizing first keeps the sublayer's input on a stable scale regardless of how big the residual stream has grown.
+$$
+\hat{x}_i = \frac{x_i - \mu}{\sqrt{\sigma^2 + \epsilon}}
+\qquad
+\text{LN}(x)_i = \gamma_i \, \hat{x}_i + \beta_i
+$$
+
+where $\gamma, \beta \in \mathbb{R}^D$ are learned per-feature scale and shift, and $\epsilon$ is a small constant (default `1e-5`) for numerical stability.
+
+In `gpt.py` this is one line — `self.ln1 = nn.LayerNorm(embed_dim)`.
 
 **Residual connection.** A straight-through identity path that the sublayer adds to:
 
@@ -225,7 +256,7 @@ x = x + sublayer(LayerNorm(x))
 
 LayerNorm gives the sublayer a clean input; the residual preserves the original. That's the recipe for *both* halves of `Block`.
 
-**`Block`** (`gpt.py:95`) — pre-norm wiring of the two sublayers:
+**`Block`** — pre-norm wiring of the two sublayers:
 
 ```python
 x = x + self.attn(self.ln1(x))   # residual + (LN → attention)
@@ -236,14 +267,41 @@ That's the entire block. Two properties worth pausing on:
 - **The residual path is never normalized.** LayerNorm sits *before* each sublayer, not on the skip connection — so an unnormalized identity flows through every block, and gradients reach early layers without vanishing.
 - **The block doesn't know it's causal.** The mask lives inside `CausalSelfAttention` via `is_causal=True`. Swap the attention sublayer for a bidirectional one and you have the ViT/DiT block — same shape, no other changes needed.
 
-**`GPT`** (`gpt.py:123`) — `embed → dropout → N × Block → final LN → linear head`. Three details worth knowing:
-- **Weight tying** at `gpt.py:151` — `self.head.weight = self.token_embed.weight`. The output head's row for token `t` is the *same vector* as the embedding for token `t`. Saves `vocab × n_embd` parameters and improves perplexity.
-- **GPT-2 residual init scaling** at `gpt.py:154-160` — projections that feed the residual stream (`c_proj`, `fc2`) are initialized with std `0.02 / √(2·n_layer)`, so activation variance stays flat through depth.
-- **`forward`** at `gpt.py:170` — returns `(logits, loss)` when `targets` is provided (training) or `(logits, None)` otherwise (inference). Same forward pass, same logits; only the loss head is conditional.
+**`GPT`** — `embed → dropout → N × Block → final LN → linear head`. Three details worth knowing:
+
+- **Weight tying.** The output head's row for token `t` is the *same vector* as the embedding for token `t`:
+
+  ```python
+  self.head = nn.Linear(n_embd, vocab_size, bias=False)
+  self.head.weight = self.token_embed.weight   # tie input embed and output head
+  ```
+
+  Saves `vocab × n_embd` parameters and improves perplexity in nearly every published comparison.
+
+- **GPT-2 residual init scaling.** Projections that feed the residual stream (`c_proj` in attention, `fc2` in MLP) are re-initialized with std `0.02 / √(2·n_layer)` so activation variance stays flat through depth:
+
+  ```python
+  for p_name, p in self.named_parameters():
+      if p_name.endswith("c_proj.weight") or p_name.endswith("fc2.weight"):
+          nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * n_layer))
+  ```
+
+- **`forward`** returns logits during inference, and `(logits, loss)` during training:
+
+  ```python
+  if targets is None:
+      return logits, None
+  loss = F.cross_entropy(
+      logits.reshape(-1, logits.size(-1)), targets.reshape(-1)
+  )
+  return logits, loss
+  ```
+
+  Same forward pass, same logits; only the loss head is conditional.
 
 ### The sampling loop
 
-`GPT.generate` (`gpt.py:193`) is the entire inference algorithm:
+`GPT.generate` is the entire inference algorithm:
 
 ```python
 for _ in range(max_new_tokens):
@@ -271,7 +329,7 @@ This loop is `O(L²)` per generated token because the full prefix is re-fed to e
 
 ### Suggested exercises
 
-- **Disable weight tying.** Comment out `gpt.py:151` and retrain. Compare final val loss and parameter count.
+- **Disable weight tying.** Comment out `self.head.weight = self.token_embed.weight` in `GPT.__init__` and retrain. Compare final val loss and parameter count.
 - **Swap to post-norm.** Move the LayerNorms in `Block.forward` to *after* each sublayer. Watch the loss curve — much less stable, may not converge without warmup tuning.
 - **Print attention weights.** Replace the fused call with the unfused formulation `(Q @ Kᵀ / √D).softmax(-1) @ V` so you can return the `(L, L)` attention map. Visualize for a generated sample — late-layer heads should concentrate on a few semantically relevant past positions.
 - **Greedy decoding.** Replace `multinomial` with `argmax` in `generate`. Output becomes deterministic per prompt — and usually noticeably worse, looping on common phrases.
