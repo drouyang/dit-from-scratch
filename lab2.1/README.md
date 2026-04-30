@@ -31,10 +31,11 @@ input (B, 3, 32, 32)
   └─ Conv2d k=4, s=2 ─► (B, 64,  8,  8) ─► BN ─► ReLU
   └─ Conv2d k=4, s=2 ─► (B, 128, 4,  4) ─► BN ─► ReLU
   └─ Flatten         ─► (B, 2048)
-  └─ Linear          ─► (B, 256)              ← bottleneck z, single vector
+  └─ Linear          ─► (B, 256)              ★ bottleneck z = encoder output
 
 ── Decoder ──────────────────────────────────────────────────────────
-  └─ Linear          ─► (B, 2048)
+input z (B, 256)
+  └─ Linear          ─► (B, 2048)             (expand back from bottleneck)
   └─ Unflatten       ─► (B, 128, 4, 4) ─► BN ─► ReLU
   └─ ConvTranspose2d ─► (B, 64,  8,  8) ─► BN ─► ReLU
   └─ ConvTranspose2d ─► (B, 32, 16, 16) ─► BN ─► ReLU
@@ -60,7 +61,8 @@ input (B, 1, 28, 28)
    z = mu + exp(½·logvar) · ε,  ε ~ N(0, I)   ★ sample, gradient flows through mu, σ
 
 ── Decoder ──────────────────────────────────────────────────────────
-  └─ Linear           ─► (B, 3136)
+input z (B, 16)
+  └─ Linear           ─► (B, 3136)            (expand back from bottleneck)
   └─ reshape          ─► (B, 64, 7, 7) ─► ReLU
   └─ ConvTranspose2d  ─► (B, 32, 14, 14) ─► ReLU
   └─ ConvTranspose2d  ─► (B,  1, 28, 28)
