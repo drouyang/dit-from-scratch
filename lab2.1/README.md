@@ -59,7 +59,7 @@ input (B, 1, 28, 28)
 
 ── Reparameterize ───────────────────────────────────────────────────
    inputs:  mu (B, 16), logvar (B, 16)             from heads above
-   z = mu + exp(½·logvar) · ε,  ε ~ N(0, I)
+   z = mu + σ · ε,    σ = exp(½·logvar),    ε ~ N(0, I)
    output:  z (B, 16)                              ★ sampled latent, gradient flows through mu, σ
 
 ── Decoder ──────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ input z (B, 16)
                                               (no sigmoid — outputs logits)
 ```
 
-Loss: `BCE_with_logits(x̂, x) + β · KL(N(mu, σ²) || N(0, I))`.
+Loss: `BCE_with_logits(x̂, x) + beta · KL(N(mu, σ²) || N(0, I))`.
 
 ### What actually changed
 
@@ -81,7 +81,7 @@ Loss: `BCE_with_logits(x̂, x) + β · KL(N(mu, σ²) || N(0, I))`.
 | Latent dim | 256 | 16 |
 | Encoder downsample stages | 3 (32 → 16 → 8 → 4) | 2 (28 → 14 → 7) |
 | Encoder bottleneck head | **1** Linear → `z` | **2** Linears → `mu`, `logvar` ★ |
-| Sampling | none — `z` is deterministic | `z = mu + σ·ε`, reparameterized ★ |
+| Sampling | none — `z` is deterministic | `z = mu + σ·eps`, reparameterized ★ |
 | Decoder output | `Sigmoid` → pixels in [0, 1] | logits (sigmoid applied at loss time) |
 | Norm in conv blocks | BatchNorm2d everywhere | none |
 | Loss | reconstruction only | reconstruction **+ KL term** ★ |
@@ -98,13 +98,13 @@ The architecture is lab 1.2's encoder/decoder, with two changes:
 
 1. **The encoder outputs two vectors** instead of one — `mu` and `logvar`, the mean and log-variance of a Gaussian over the latent. We sample
    ```
-   z = mu + sigma * eps,    eps ~ N(0, I),    sigma = exp(0.5 * logvar)
+   z = mu + σ * eps,    eps ~ N(0, I),    σ = exp(0.5 * logvar)
    ```
-   This is the **reparameterization trick**: the random sample is rewritten as a deterministic function of `(mu, sigma)` plus an external noise source `eps`, so backprop can flow through `mu` and `sigma`. Sampling directly would sever the gradient.
+   This is the **reparameterization trick**: the random sample is rewritten as a deterministic function of `(mu, σ)` plus an external noise source `eps`, so backprop can flow through `mu` and `σ`. Sampling directly would sever the gradient.
 
-2. **The loss adds a KL term** that pulls the per-image posterior `N(mu, sigma^2)` toward the standard normal prior `N(0, I)`:
+2. **The loss adds a KL term** that pulls the per-image posterior `N(mu, σ²)` toward the standard normal prior `N(0, I)`:
    ```
-   L = recon(x, x̂) + beta * KL(N(mu, sigma^2) || N(0, I))
+   L = recon(x, x̂) + beta * KL(N(mu, σ²) || N(0, I))
    ```
    For two Gaussians the KL has a closed form:
    ```
@@ -128,7 +128,7 @@ The asymmetry is why the VAE uses `KL(q || p)` specifically (encoder posterior m
 
 ```
  input image                     latent                       reconstructed image
-(1, 28, 28)  →  [Encoder]  →  (mu, logvar)  →  z = mu + sigma·ε  →  [Decoder]  →  (1, 28, 28)
+(1, 28, 28)  →  [Encoder]  →  (mu, logvar)  →  z = mu + σ·ε  →  [Decoder]  →  (1, 28, 28)
                                   │
                                   └──── KL pulls (mu, logvar) toward (0, 0)
 ```
@@ -182,7 +182,7 @@ Three ideas to lock in.
 
 **Why a sample, not just `mu`?** A deterministic autoencoder maps every image to a single point. If you decode any *other* point — say, `mu + 0.1·v` — you get nothing useful, because nothing during training trained the decoder to handle non-encoded points. The reparameterized sample injects noise *during training*, forcing the decoder to be robust around each `mu`. Combined with the KL term, this turns the latent space into a continuous manifold rather than a finite set of points.
 
-**Why `logvar`, not `sigma`?** A Linear layer can output any real value. `logvar` can be negative (small variance) or positive (large variance), no constraint needed. `sigma` would have to be strictly positive — you'd need an exp/softplus head and worry about numerical precision. Using `logvar` is the standard VAE convention and the math is cleaner: `sigma = exp(0.5 · logvar)`.
+**Why `logvar`, not `σ`?** A Linear layer can output any real value. `logvar` can be negative (small variance) or positive (large variance), no constraint needed. `σ` would have to be strictly positive — you'd need an exp/softplus head and worry about numerical precision. Using `logvar` is the standard VAE convention and the math is cleaner: `σ = exp(0.5 · logvar)`.
 
 **Why `beta`?** Different tasks want different priors. For pure generative quality you want `beta = 1` (the proper ELBO). For learning *disentangled* latent dimensions you want `beta > 1` (β-VAE: each dim of `z` ends up encoding a single semantic factor, at the cost of recon quality). For sharp reconstructions only, `beta < 1` (relaxes the KL pressure). The Stable Diffusion VAE uses `beta ≈ 1e-6` — a tiny KL weight, because the diffusion model on top of it provides most of the regularization. We default to `beta = 1` because it's the textbook setup.
 
