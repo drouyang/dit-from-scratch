@@ -2,7 +2,7 @@
 
 > Part 2 — Diffusion Essentials · [DiT from Scratch](../README.md)
 
-**Goal**: turn lab 1.2's deterministic autoencoder into a **Variational** Autoencoder by adding the two pieces that make the latent space generative — make the encoder output a normal distribution (parameterized by `mu` and `logvar`) and add a loss term that pulls it toward the standard normal `N(0, I)`. Train on MNIST, then verify the latent space is well-formed by (a) sampling `z ~ N(0, I)` → decode and (b) interpolating between two encoded digits.
+**Goal**: turn lab 1.2's deterministic autoencoder into a **Variational** Autoencoder by adding the two pieces that make the latent space generative — make the encoder output a normal distribution (parameterized by `mu` and `logvar`) and add a loss term that pulls it toward the standard normal `N(0, I)`. Train on MNIST, then verify the latent space is continuous and meaningful by checking that (a) random points in latent space decode to plausible new digits and (b) walking between two encoded digits produces a smooth morph.
 
 **Why this matters for DiT**: DiT does not operate on raw pixels. It operates on **latents produced by a VAE** — the Stable Diffusion VAE, an 8× spatial downsampler with a 4-channel latent. Diffusion learns to navigate that latent space, and the only reason it can navigate it is the VAE's prior regularization: without it, the latent space would be a bag of disconnected points and intermediate latents (which diffusion produces at every denoising step) would decode to garbage. The trick you build here is the same one Stable Diffusion uses; only the encoder/decoder shapes change.
 
