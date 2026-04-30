@@ -86,7 +86,7 @@ Loss: `BCE_with_logits(x̂, x) + beta · KL(N(mu, σ²) || N(0, I))`.
 | Norm in conv blocks | BatchNorm2d everywhere | none |
 | Loss | reconstruction only | reconstruction **+ KL term** ★ |
 
-The **★** rows are the three changes that define a VAE. Everything else is incidental — different dataset (CIFAR is harder; MNIST is good enough at smaller capacity), different normalization choice (BatchNorm helps with deeper RGB stacks; tiny grayscale MNIST converges fine without it), one fewer downsample stage (28 = 7 × 4 wants 2 stages, 32 = 4 × 8 wants 3). The VAE *idea* is just: make the encoder output a distribution and add a KL term that anchors that distribution to a known prior.
+The **★** rows are the three changes that define a VAE. Everything else is incidental — different dataset (CIFAR is harder; MNIST is good enough at smaller capacity), different normalization choice (BatchNorm helps with deeper RGB stacks; tiny grayscale MNIST converges fine without it), one fewer downsample stage (28 = 7 × 4 wants 2 stages, 32 = 4 × 8 wants 3). **The VAE *idea* is just: make the encoder output a normal distribution (`mu`, `logvar` defining `N(mu, σ²·I)`), sample `z` from it, and add a KL term that anchors that distribution to a known prior.**
 
 (For DiT later, this same encoder/decoder pattern shows up at SD-VAE scale: a few-channel spatial latent → conv stack → multiple transposed-conv stages → 256×256 RGB. Different sizes, same recipe, same KL.)
 
