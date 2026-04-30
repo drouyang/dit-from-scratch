@@ -2,7 +2,7 @@
 
 > Part 2 — Diffusion Essentials · [DiT from Scratch](../README.md)
 
-**Goal**: turn lab 1.2's deterministic autoencoder into a **Variational** Autoencoder by adding the two pieces that make the latent space generative — a Gaussian posterior `(mu, logvar)` and a regularizer that pulls it toward `N(0, I)`. Train on MNIST, then verify the latent space is well-formed by (a) sampling `z ~ N(0, I)` → decode and (b) interpolating between two encoded digits.
+**Goal**: turn lab 1.2's deterministic autoencoder into a **Variational** Autoencoder by adding the two pieces that make the latent space generative — make the encoder output a normal distribution (parameterized by `mu` and `logvar`) and add a loss term that pulls it toward the standard normal `N(0, I)`. Train on MNIST, then verify the latent space is well-formed by (a) sampling `z ~ N(0, I)` → decode and (b) interpolating between two encoded digits.
 
 **Why this matters for DiT**: DiT does not operate on raw pixels. It operates on **latents produced by a VAE** — the Stable Diffusion VAE, an 8× spatial downsampler with a 4-channel latent. Diffusion learns to navigate that latent space, and the only reason it can navigate it is the VAE's prior regularization: without it, the latent space would be a bag of disconnected points and intermediate latents (which diffusion produces at every denoising step) would decode to garbage. The trick you build here is the same one Stable Diffusion uses; only the encoder/decoder shapes change.
 
@@ -96,7 +96,7 @@ The **★** rows are the three changes that define a VAE. Everything else is inc
 
 The architecture is lab 1.2's encoder/decoder, with two changes:
 
-1. **The encoder outputs two vectors** instead of one — `mu` and `logvar`, the mean and log-variance of a Gaussian over the latent. We sample
+1. **The encoder outputs two vectors** instead of one — `mu` and `logvar`, the mean and log-variance of a normal distribution over the latent. We sample
    ```
    z = mu + σ * eps,    eps ~ N(0, I),    σ = exp(0.5 * logvar)
    ```
@@ -106,7 +106,7 @@ The architecture is lab 1.2's encoder/decoder, with two changes:
    ```
    L = recon(x, x̂) + beta * KL(N(mu, σ²) || N(0, I))
    ```
-   For two Gaussians the KL has a closed form:
+   For two normal distributions the KL has a closed form:
    ```
    KL = -0.5 * sum(1 + logvar - mu^2 - exp(logvar))
    ```
@@ -124,7 +124,7 @@ Three properties to know:
 - **Asymmetric**: `KL(P || Q) ≠ KL(Q || P)` in general. The first argument is "the distribution being measured," the second is "the reference."
 - **Information-theoretic reading**: it's the expected number of *extra* bits (or nats) you'd need to encode samples from `P` if you used a code optimized for `Q`. Zero if your code is already optimal; large if `P` puts mass where `Q` doesn't.
 
-The asymmetry is why the VAE uses `KL(q || p)` specifically (encoder posterior measured *against* the prior, not the other way around). `KL(q || p)` is **mode-seeking** — heavily penalizes `q` putting mass where `p` doesn't, but tolerates `q` covering only part of `p`. The reverse, `KL(p || q)`, is **mode-covering** and would force `q` to spread out and cover all of `p`. Different choice, different VAE behavior. The standard VAE uses `KL(q || p)` because it falls out of the ELBO derivation and has the closed form above for Gaussians.
+The asymmetry is why the VAE uses `KL(q || p)` specifically (encoder posterior measured *against* the prior, not the other way around). `KL(q || p)` is **mode-seeking** — heavily penalizes `q` putting mass where `p` doesn't, but tolerates `q` covering only part of `p`. The reverse, `KL(p || q)`, is **mode-covering** and would force `q` to spread out and cover all of `p`. Different choice, different VAE behavior. The standard VAE uses `KL(q || p)` because it falls out of the ELBO derivation and has the closed form above for normal distributions.
 
 ```
  input image                     latent                       reconstructed image
