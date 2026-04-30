@@ -21,18 +21,19 @@ The VAE in this lab is lab 1.2's autoencoder with three small but consequential 
                   D ≪ C·H·W forces compression
 ```
 
-`ConvTranspose2d` (in the decoder) is the learnable inverse of a strided `Conv2d` — conceptually inserts `(stride − 1)` zeros between input pixels and runs a regular convolution. With `kernel_size=4, stride=2, padding=1` (or `k=3, s=2, p=1, output_padding=1`), each layer doubles `H` and `W`.
-
 ### Lab 1.2 — deterministic autoencoder on CIFAR-10
 
 ```
 input (B, 3, 32, 32)
+
+── Encoder ──────────────────────────────────────────────────────────
   └─ Conv2d k=4, s=2 ─► (B, 32, 16, 16) ─► BN ─► ReLU
   └─ Conv2d k=4, s=2 ─► (B, 64,  8,  8) ─► BN ─► ReLU
   └─ Conv2d k=4, s=2 ─► (B, 128, 4,  4) ─► BN ─► ReLU
   └─ Flatten         ─► (B, 2048)
   └─ Linear          ─► (B, 256)              ← bottleneck z, single vector
 
+── Decoder ──────────────────────────────────────────────────────────
   └─ Linear          ─► (B, 2048)
   └─ Unflatten       ─► (B, 128, 4, 4) ─► BN ─► ReLU
   └─ ConvTranspose2d ─► (B, 64,  8,  8) ─► BN ─► ReLU
@@ -47,14 +48,18 @@ Loss: MSE (or BCE) reconstruction only. No KL term, no sampling.
 
 ```
 input (B, 1, 28, 28)
+
+── Encoder ──────────────────────────────────────────────────────────
   └─ Conv2d k=3, s=2 ─► (B, 32, 14, 14) ─► ReLU
   └─ Conv2d k=3, s=2 ─► (B, 64,  7,  7) ─► ReLU
   └─ Flatten          ─► (B, 3136)
   ├─ Linear ─► (B, 16)  ← mu
   └─ Linear ─► (B, 16)  ← logvar       ★ two heads instead of one
 
-   z = mu + exp(½·logvar) · ε,  ε ~ N(0, I)   ★ reparameterized sample
+── Reparameterize ───────────────────────────────────────────────────
+   z = mu + exp(½·logvar) · ε,  ε ~ N(0, I)   ★ sample, gradient flows through mu, σ
 
+── Decoder ──────────────────────────────────────────────────────────
   └─ Linear           ─► (B, 3136)
   └─ reshape          ─► (B, 64, 7, 7) ─► ReLU
   └─ ConvTranspose2d  ─► (B, 32, 14, 14) ─► ReLU
