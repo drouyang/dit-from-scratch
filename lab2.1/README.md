@@ -6,6 +6,81 @@
 
 **Why this matters for DiT**: DiT does not operate on raw pixels. It operates on **latents produced by a VAE** — the Stable Diffusion VAE, an 8× spatial downsampler with a 4-channel latent. Diffusion learns to navigate that latent space, and the only reason it can navigate it is the VAE's prior regularization: without it, the latent space would be a bag of disconnected points and intermediate latents (which diffusion produces at every denoising step) would decode to garbage. The trick you build here is the same one Stable Diffusion uses; only the encoder/decoder shapes change.
 
+## Refresher: from autoencoder (lab 1.2) to VAE (lab 2.1)
+
+The VAE in this lab is lab 1.2's autoencoder with three small but consequential changes. Recap of both architectures so the diff is precise.
+
+**The shape of the problem.** An autoencoder pushes an image through a **bottleneck** — a flat latent vector much smaller than the image — and is trained to reconstruct the input from that compressed code. The encoder learns to throw away information that doesn't help reconstruction; the decoder learns to undo the compression. With no bottleneck the network would just learn the identity.
+
+```
+   image  ─►  Encoder  ─►  z (latent)  ─►  Decoder  ─►  reconstruction
+ (B,C,H,W)   downsample      (B, D)         upsample       (B,C,H,W)
+              + flatten                    + reshape
+                            ▲
+                       bottleneck:
+                  D ≪ C·H·W forces compression
+```
+
+`ConvTranspose2d` (in the decoder) is the learnable inverse of a strided `Conv2d` — conceptually inserts `(stride − 1)` zeros between input pixels and runs a regular convolution. With `kernel_size=4, stride=2, padding=1` (or `k=3, s=2, p=1, output_padding=1`), each layer doubles `H` and `W`.
+
+### Lab 1.2 — deterministic autoencoder on CIFAR-10
+
+```
+input (B, 3, 32, 32)
+  └─ Conv2d k=4, s=2 ─► (B, 32, 16, 16) ─► BN ─► ReLU
+  └─ Conv2d k=4, s=2 ─► (B, 64,  8,  8) ─► BN ─► ReLU
+  └─ Conv2d k=4, s=2 ─► (B, 128, 4,  4) ─► BN ─► ReLU
+  └─ Flatten         ─► (B, 2048)
+  └─ Linear          ─► (B, 256)              ← bottleneck z, single vector
+
+  └─ Linear          ─► (B, 2048)
+  └─ Unflatten       ─► (B, 128, 4, 4) ─► BN ─► ReLU
+  └─ ConvTranspose2d ─► (B, 64,  8,  8) ─► BN ─► ReLU
+  └─ ConvTranspose2d ─► (B, 32, 16, 16) ─► BN ─► ReLU
+  └─ ConvTranspose2d ─► (B,  3, 32, 32)
+  └─ Sigmoid          ─► reconstruction in [0, 1]
+```
+
+Loss: MSE (or BCE) reconstruction only. No KL term, no sampling.
+
+### Lab 2.1 — VAE on MNIST
+
+```
+input (B, 1, 28, 28)
+  └─ Conv2d k=3, s=2 ─► (B, 32, 14, 14) ─► ReLU
+  └─ Conv2d k=3, s=2 ─► (B, 64,  7,  7) ─► ReLU
+  └─ Flatten          ─► (B, 3136)
+  ├─ Linear ─► (B, 16)  ← mu
+  └─ Linear ─► (B, 16)  ← logvar       ★ two heads instead of one
+
+   z = mu + exp(½·logvar) · ε,  ε ~ N(0, I)   ★ reparameterized sample
+
+  └─ Linear           ─► (B, 3136)
+  └─ reshape          ─► (B, 64, 7, 7) ─► ReLU
+  └─ ConvTranspose2d  ─► (B, 32, 14, 14) ─► ReLU
+  └─ ConvTranspose2d  ─► (B,  1, 28, 28)
+                                              (no sigmoid — outputs logits)
+```
+
+Loss: `BCE_with_logits(x̂, x) + β · KL(N(mu, σ²) || N(0, I))`.
+
+### What actually changed
+
+| | Lab 1.2 (AE) | Lab 2.1 (VAE) |
+| --- | --- | --- |
+| Dataset | CIFAR-10, (3, 32, 32) | MNIST, (1, 28, 28) |
+| Latent dim | 256 | 16 |
+| Encoder downsample stages | 3 (32 → 16 → 8 → 4) | 2 (28 → 14 → 7) |
+| Encoder bottleneck head | **1** Linear → `z` | **2** Linears → `mu`, `logvar` ★ |
+| Sampling | none — `z` is deterministic | `z = mu + σ·ε`, reparameterized ★ |
+| Decoder output | `Sigmoid` → pixels in [0, 1] | logits (sigmoid applied at loss time) |
+| Norm in conv blocks | BatchNorm2d everywhere | none |
+| Loss | reconstruction only | reconstruction **+ KL term** ★ |
+
+The **★** rows are the three changes that define a VAE. Everything else is incidental — different dataset (CIFAR is harder; MNIST is good enough at smaller capacity), different normalization choice (BatchNorm helps with deeper RGB stacks; tiny grayscale MNIST converges fine without it), one fewer downsample stage (28 = 7 × 4 wants 2 stages, 32 = 4 × 8 wants 3). The VAE *idea* is just: make the encoder output a distribution and add a KL term that anchors that distribution to a known prior.
+
+(For DiT later, this same encoder/decoder pattern shows up at SD-VAE scale: a few-channel spatial latent → conv stack → multiple transposed-conv stages → 256×256 RGB. Different sizes, same recipe, same KL.)
+
 ## What the model learns
 
 **MNIST**: 28×28 grayscale digits, 60k train / 10k test. Small and clean enough that the latent space is interpretable in a single afternoon's training.
