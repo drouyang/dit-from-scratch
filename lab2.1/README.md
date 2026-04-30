@@ -58,7 +58,9 @@ input (B, 1, 28, 28)
   └─ Linear ─► (B, 16)  ← logvar       ★ two heads instead of one
 
 ── Reparameterize ───────────────────────────────────────────────────
-   z = mu + exp(½·logvar) · ε,  ε ~ N(0, I)   ★ sample, gradient flows through mu, σ
+   inputs:  mu (B, 16), logvar (B, 16)             from heads above
+   z = mu + exp(½·logvar) · ε,  ε ~ N(0, I)
+   output:  z (B, 16)                              ★ sampled latent, gradient flows through mu, σ
 
 ── Decoder ──────────────────────────────────────────────────────────
 input z (B, 16)
