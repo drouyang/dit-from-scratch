@@ -28,7 +28,7 @@ The architecture is lab 1.2's encoder/decoder, with two changes:
    ```
    Without this term the encoder is free to spread points anywhere in latent space — there's no reason for two adjacent latents to decode to similar images. With it, the latents pile up near the origin, the prior matches the aggregate posterior, and `N(0, I)` becomes a usable sampling distribution.
 
-**Aside: what KL stands for.** **Kullback–Leibler divergence**, after Solomon Kullback and Richard Leibler (1951). It measures how different two probability distributions are:
+KL stands for Kullback–Leibler divergence, after Solomon Kullback and Richard Leibler (1951). It measures how different two probability distributions are:
 
 ```
 KL(P || Q) = ∫ p(x) · log( p(x) / q(x) ) dx
