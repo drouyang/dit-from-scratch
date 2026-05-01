@@ -75,7 +75,7 @@ Loss: `BCE_with_logits(x̂, x) + beta · KL(N(mu, σ²) || N(0, I))`.
 
 ### What actually changed
 
-**The one-line VAE idea: encode each image as a *distribution* over latent space, sample from it, and decode the sample.** The two heads and the reparameterization trick are the plumbing that makes this differentiable; the KL term is what keeps the distributions from collapsing back to points.
+**The one-line VAE idea: encode each image as a *distribution* over latent space, sample from it, and decode the sample.**
 
 | | Lab 1.2 (AE) | Lab 2.1 (VAE) |
 | --- | --- | --- |
