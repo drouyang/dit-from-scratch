@@ -30,8 +30,7 @@ The training and sampling framework DiT is trained under.
 | Module | Topic | Lab |
 |---|---|---|
 | 2.1 | VAE — the latent space DiT operates in | [lab2.1](./lab2.1) |
-| 2.2 | DDPM / DDIM / Classifier-Free Guidance | [lab2.2](./lab2.2) |
-| 2.3 | Flow Matching / Rectified Flow | [lab2.3](./lab2.3) |
+| 2.2 | Flow Matching with CFG (brief DDPM comparison) | [lab2.2](./lab2.2) |
 
 ## Part 3 — DiT
 
@@ -45,7 +44,7 @@ Put it together.
 
 ## Capstone
 
-**Mini text-to-image**: Latent DiT (3.2) with text conditioning (3.3), trained with flow matching (2.3) and CFG (2.2) on a small text-image dataset.
+**Mini text-to-image**: Latent DiT (3.2) with text conditioning (3.3), trained with flow matching + CFG (2.2) on a small text-image dataset.
 
 
 ## Reference Library
