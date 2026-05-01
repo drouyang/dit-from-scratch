@@ -11,7 +11,7 @@ Each module has its own lab directory with detailed instructions (e.g. `lab1.1/`
 
 ## Part 1 — Building Blocks
 
-The primitives DiT is made of. Skip none of these — every one shows up inside the final model.
+The primitives DiT is made of.
 
 | Module | Topic | Lab |
 |---|---|---|
