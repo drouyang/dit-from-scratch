@@ -51,10 +51,7 @@ Put it together.
 
 ## Reference Library
 
-- [DiT paper (Peebles & Xie)](https://arxiv.org/abs/2212.09748) and [facebookresearch/DiT](https://github.com/facebookresearch/DiT)
-- [Latent Diffusion (Rombach et al.)](https://arxiv.org/abs/2112.10752)
-- [Flow Matching (Lipman et al.)](https://arxiv.org/abs/2210.02747), [Rectified Flow (Liu et al.)](https://arxiv.org/abs/2209.03003)
-- Karpathy — "Neural Networks: Zero to Hero" and [nanoGPT](https://github.com/karpathy/nanoGPT)
-- [Lilian Weng's blog](https://lilianweng.github.io/) — diffusion and flow-matching posts
-- Hugging Face `diffusers` source — reference implementations of DiT/SD3
-- Annotated Transformer / Annotated Diffusion
+- [DiT paper (Peebles & Xie 2022)](https://arxiv.org/abs/2212.09748) and [facebookresearch/DiT](https://github.com/facebookresearch/DiT) — the architecture this course builds toward.
+- [Stable Diffusion 3 / MMDiT (Esser et al. 2024)](https://arxiv.org/abs/2403.03206) — the modern canonical paper. DiT + latent diffusion + flow matching + multimodal text/image attention, all in one.
+- [Flow Matching (Lipman et al. 2022)](https://arxiv.org/abs/2210.02747), [Rectified Flow (Liu et al. 2022)](https://arxiv.org/abs/2209.03003) — the production training paradigm.
+- Hugging Face [`diffusers`](https://github.com/huggingface/diffusers) — reference implementations of SD3, FLUX, and friends.
