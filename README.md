@@ -38,13 +38,15 @@ Put it together.
 
 | Module | Topic | Lab |
 |---|---|---|
-| 3.1 | DiT architecture — patchify, AdaLN-Zero, class conditioning | [lab3.1](./lab3.1) |
+| 3.1 | DiT architecture — patchify, AdaLN-Zero, RoPE (with class conditioning as a stepping stone toward text) | [lab3.1](./lab3.1) |
 | 3.2 | Latent DiT — VAE + DiT end-to-end | [lab3.2](./lab3.2) |
-| 3.3 | Text conditioning + CFG | [lab3.3](./lab3.3) |
+| 3.3 | Text conditioning — T5/CLIP encoder + cross-attention | [lab3.3](./lab3.3) |
 
 ## Capstone
 
 **Mini text-to-image**: Latent DiT (3.2) with text conditioning (3.3), trained with flow matching + CFG (2.2) on a small text-image dataset.
+
+**Extending to video (WAN, LTX-Video, HunyuanVideo style).** The capstone stops at images because video training needs a cluster, not a laptop. To take the same stack to video, four pieces change: (1) the VAE becomes a **3D causal VAE** that compresses both spatial and temporal axes, producing latents of shape `(C, T, H, W)`; (2) patchify becomes **3D patchify** that tokenizes across time as well as space; (3) RoPE generalizes to **3D RoPE** for `(t, h, w)` positions; (4) compute requirements jump 1–2 orders of magnitude. Everything else — DiT block structure, AdaLN-Zero, flow matching loss, CFG, text conditioning — carries over unchanged.
 
 
 ## Reference Library
