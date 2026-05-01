@@ -107,6 +107,8 @@ The architecture is lab 1.2's encoder/decoder, with two changes:
    ```
    L = recon(x, x̂) + beta * KL(N(mu, σ²) || N(0, I))
    ```
+   `recon(x, x̂)` is the reconstruction loss between the input `x` and the decoder's output `x̂` — `BCE_with_logits` in this lab (MSE in many textbooks). This whole loss `L` is the **negative ELBO** ("Evidence Lower BOund"), the standard VAE objective from variational inference: we minimize `L`, which equivalently maximizes the ELBO. That's why the training log later reports `ELBO`, `recon`, and `KL` separately — they're the three terms of this same equation.
+
    For two normal distributions the KL has a closed form:
    ```
    KL = -0.5 * sum(1 + logvar - mu^2 - exp(logvar))
