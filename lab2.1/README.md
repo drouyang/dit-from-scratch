@@ -111,21 +111,7 @@ The architecture is lab 1.2's encoder/decoder, with two changes:
    ```
    KL = -0.5 * sum(1 + logvar - mu^2 - exp(logvar))
    ```
-   Without this term the encoder is free to spread points anywhere in latent space — there's no reason for two adjacent latents to decode to similar images. With it, the latents pile up near the origin, the prior matches the aggregate posterior, and `N(0, I)` becomes a usable sampling distribution.
-
-KL stands for Kullback–Leibler divergence, after Solomon Kullback and Richard Leibler (1951). It measures how different two probability distributions are:
-
-```
-KL(P || Q) = ∫ p(x) · log( p(x) / q(x) ) dx
-```
-
-Three properties to know:
-
-- **Non-negative**: `KL(P || Q) ≥ 0`, with equality iff `P = Q`. Minimizing it pulls `P` toward `Q`.
-- **Asymmetric**: `KL(P || Q) ≠ KL(Q || P)` in general. The first argument is "the distribution being measured," the second is "the reference."
-- **Information-theoretic reading**: it's the expected number of *extra* bits (or nats) you'd need to encode samples from `P` if you used a code optimized for `Q`. Zero if your code is already optimal; large if `P` puts mass where `Q` doesn't.
-
-The asymmetry is why the VAE uses `KL(q || p)` specifically (encoder posterior measured *against* the prior, not the other way around). `KL(q || p)` is **mode-seeking** — heavily penalizes `q` putting mass where `p` doesn't, but tolerates `q` covering only part of `p`. The reverse, `KL(p || q)`, is **mode-covering** and would force `q` to spread out and cover all of `p`. Different choice, different VAE behavior. The standard VAE uses `KL(q || p)` because it falls out of the ELBO derivation and has the closed form above for normal distributions.
+   KL stands for Kullback–Leibler divergence, after Solomon Kullback and Richard Leibler (1951). It measures how different two probability distributions are. Without this term the encoder is free to spread points anywhere in latent space — there's no reason for two adjacent latents to decode to similar images. With it, the latents pile up near the origin, the prior matches the aggregate posterior, and `N(0, I)` becomes a usable sampling distribution. 
 
 ```
  input image                     latent                       reconstructed image
