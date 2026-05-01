@@ -156,17 +156,18 @@ What to watch:
 - **`recon` falls fast at first, then slows.** Reconstruction quickly learns to roughly match the digit; the slow tail is sharpening edges and strokes.
 - **`KL` rises over training.** Counter-intuitive but correct: at init, both `mu` and `logvar` are near zero, so KL is tiny. As the encoder learns to actually *use* the latent space (place different digits at different `mu`), KL grows. KL = 0 means the posterior collapsed and the latent is unused (a known VAE failure mode).
 
-### 3. Reconstruct, sample, interpolate
+### 3. Reconstruct, sample, interpolate, scatter
 
 ```bash
 python visualize.py --mode all
 ```
 
-This produces three figures in `lab2.1/`:
+This produces four figures in `lab2.1/`:
 
 - `reconstructions.png` — top row originals, bottom row VAE reconstructions. Should look like blurry-but-recognizable digits. Reconstruction quality is similar to lab 1.2's autoencoder; the VAE does not reconstruct *better* than an autoencoder. The point of the VAE is what the latent space *can do*, not how well it reconstructs.
 - `samples.png` — 64 digits decoded from `z ~ N(0, I)`. **This is the strictest test of the KL term.** A trained VAE produces plausible digits here. An autoencoder without KL would produce noise: random points in its latent space don't correspond to anything the decoder was trained on.
 - `interpolation.png` — two random test digits at the ends, eight intermediate frames in between. Walking linearly between `mu_a` and `mu_b` should morph smoothly through digit shapes. Without the KL prior, the line between two valid latents passes through "off-manifold" regions and the intermediate frames look like noise.
+- `latent_scatter.png` — 2000 encoded test digits' `mu` values, scattered in 2-D, colored by digit class. Plotted directly when `latent_dim=2`; PCA-projected to 2-D otherwise. You should see ten partially-separated clusters sitting inside roughly a circle of radius ~3 (the spread of `N(0, I)` projected to 2-D). Cleaner cluster separation = the encoder is using the latent space *meaningfully*; clusters all piled at the origin = the encoder collapsed (KL too strong, or training too short).
 
 To run a single visualization:
 
@@ -174,6 +175,7 @@ To run a single visualization:
 python visualize.py --mode reconstruct --n 12
 python visualize.py --mode sample
 python visualize.py --mode interpolate --n 16
+python visualize.py --mode scatter
 ```
 
 ### 4. Experiment with `beta`
@@ -204,13 +206,28 @@ The trade-off — recon quality vs latent-space quality — is the whole reason 
 
 ### 5. Experiment with `latent_dim`
 
+Train three models at different bottleneck sizes:
+
 ```bash
 python train.py --latent-dim 2   --save-path vae_z2.pt    # extreme bottleneck
 python train.py --latent-dim 16  --save-path vae_z16.pt   # default
 python train.py --latent-dim 64  --save-path vae_z64.pt
 ```
 
-`latent_dim=2` is so tight that you can plot the entire latent space on a 2-D scatter, color-coded by digit class — a classic VAE figure. Reconstructions at `latent_dim=2` are markedly blurrier (most digit information cannot fit through 2 numbers), but interpolations are particularly clean because the manifold is dense in 2-D.
+Then visualize each — the `scatter` mode is especially informative here:
+
+```bash
+python visualize.py --ckpt vae_z2.pt   --save-prefix z2_
+python visualize.py --ckpt vae_z16.pt  --save-prefix z16_
+python visualize.py --ckpt vae_z64.pt  --save-prefix z64_
+```
+
+What to compare across the three:
+
+- **Reconstruction sharpness** (`*_reconstructions.png`) — `latent_dim=2` is markedly blurrier; most digit information can't fit through 2 numbers. `latent_dim=64` is sharpest.
+- **Sample quality** (`*_samples.png`) — `latent_dim=2` and 16 give the cleanest prior samples. At `latent_dim=64` the latent space has more dimensions for KL to regularize, so prior samples can occasionally look weirder.
+- **Interpolation smoothness** (`*_interpolation.png`) — particularly clean at `latent_dim=2` because the entire 2-D manifold is densely covered.
+- **Latent-space scatter** (`*_latent_scatter.png`) — at `latent_dim=2` the scatter is *the entire latent space*, plotted directly: the classic VAE figure showing ten digit-class clusters arranged inside the prior. At higher dims the scatter is a 2-D PCA projection of a higher-dim encoded space — still useful for spotting whether the encoder separates classes, but no longer the full picture.
 
 ## Discussion
 
