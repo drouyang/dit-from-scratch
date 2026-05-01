@@ -75,8 +75,11 @@ Loss: `BCE_with_logits(x̂, x) + beta · KL(N(mu, σ²) || N(0, I))`.
 
 ### What actually changed
 
+**The one-line VAE idea: encode each image as a *distribution* over latent space, sample from it, and decode the sample.** The two heads and the reparameterization trick are the plumbing that makes this differentiable; the KL term is what keeps the distributions from collapsing back to points.
+
 | | Lab 1.2 (AE) | Lab 2.1 (VAE) |
 | --- | --- | --- |
+| What an image gets encoded as | one vector `z ∈ R^d` | a distribution `N(mu, σ²·I)` over `R^d` ★ |
 | Dataset | CIFAR-10, (3, 32, 32) | MNIST, (1, 28, 28) |
 | Latent dim | 256 | 16 |
 | Encoder downsample stages | 3 (32 → 16 → 8 → 4) | 2 (28 → 14 → 7) |
@@ -86,7 +89,7 @@ Loss: `BCE_with_logits(x̂, x) + beta · KL(N(mu, σ²) || N(0, I))`.
 | Norm in conv blocks | BatchNorm2d everywhere | none |
 | Loss | reconstruction only | reconstruction **+ KL term** ★ |
 
-The **★** rows are the three changes that define a VAE. Everything else is incidental — different dataset (CIFAR is harder; MNIST is good enough at smaller capacity), different normalization choice (BatchNorm helps with deeper RGB stacks; tiny grayscale MNIST converges fine without it), one fewer downsample stage (28 = 7 × 4 wants 2 stages, 32 = 4 × 8 wants 3). **The VAE *idea* is just: make the encoder output a normal distribution (`mu`, `logvar` defining `N(mu, σ²·I)`), sample `z` from it, and add a KL term that anchors that distribution to a known prior.**
+The **★** rows are the changes that define a VAE. Everything else is incidental — different dataset (CIFAR is harder; MNIST is good enough at smaller capacity), different normalization choice (BatchNorm helps with deeper RGB stacks; tiny grayscale MNIST converges fine without it), one fewer downsample stage (28 = 7 × 4 wants 2 stages, 32 = 4 × 8 wants 3).
 
 ## What the model learns
 
@@ -94,11 +97,11 @@ The **★** rows are the three changes that define a VAE. Everything else is inc
 
 The architecture is lab 1.2's encoder/decoder, with two changes:
 
-1. **The encoder outputs two vectors** instead of one — `mu` and `logvar`, the mean and log-variance of a normal distribution over the latent. We sample
+1. **The encoder outputs two vectors** instead of one — `mu` and `logvar`, the mean and log-variance of a normal distribution over the latent. We want to draw a sample from `N(mu, σ²)`. The naive way — `torch.distributions.Normal(mu, σ).sample()` — gives the right sample but the result has no `grad_fn`, so backprop can't flow back to `mu` and `σ` and we can't train the encoder. The fix is the **reparameterization trick**:
    ```
    z = mu + σ * eps,    eps ~ N(0, I),    σ = exp(0.5 * logvar)
    ```
-   This is the **reparameterization trick**: the random sample is rewritten as a deterministic function of `(mu, σ)` plus an external noise source `eps`, so backprop can flow through `mu` and `σ`. Sampling directly would sever the gradient.
+   This is a sample from `N(mu, σ²)` rewritten as a *deterministic* function of `(mu, σ)` plus a parameterless noise source `eps`. Now `∂z/∂mu = 1` and `∂z/∂σ = eps`, so gradients flow normally through the encoder. Same sample; differentiable computation graph.
 
 2. **The loss adds a KL term** that pulls the per-image posterior `N(mu, σ²)` toward the standard normal prior `N(0, I)`:
    ```
