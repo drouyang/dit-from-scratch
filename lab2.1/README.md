@@ -113,15 +113,6 @@ The architecture is lab 1.2's encoder/decoder, with two changes:
    ```
    KL stands for Kullback–Leibler divergence, after Solomon Kullback and Richard Leibler (1951). It measures how different two probability distributions are. Without this term the encoder is free to spread points anywhere in latent space — there's no reason for two adjacent latents to decode to similar images. With it, the latents pile up near the origin, the prior matches the aggregate posterior, and `N(0, I)` becomes a usable sampling distribution. 
 
-```
- input image                     latent                       reconstructed image
-(1, 28, 28)  →  [Encoder]  →  (mu, logvar)  →  z = mu + σ·ε  →  [Decoder]  →  (1, 28, 28)
-                                  │
-                                  └──── KL pulls (mu, logvar) toward (0, 0)
-```
-
-`beta = 1` is standard ELBO. `beta > 1` makes the KL weight heavier — smoother latent space, blurrier reconstructions (the **β-VAE** knob). `beta < 1` is the opposite trade-off.
-
 ## Files
 
 | File | What it is |
