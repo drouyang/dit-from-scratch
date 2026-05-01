@@ -113,7 +113,7 @@ The architecture is lab 1.2's encoder/decoder, with two changes:
    ```
    KL = -0.5 * sum(1 + logvar - mu^2 - exp(logvar))
    ```
-   KL stands for Kullback–Leibler divergence, after Solomon Kullback and Richard Leibler (1951). It measures how different two probability distributions are. Without this term the encoder is free to spread points anywhere in latent space — there's no reason for two adjacent latents to decode to similar images. With it, the latents pile up near the origin, the prior matches the aggregate posterior, and `N(0, I)` becomes a usable sampling distribution. 
+   KL stands for Kullback–Leibler divergence, after Solomon Kullback and Richard Leibler (1951). It measures how different two probability distributions are. Without this term the encoder is free to spread points anywhere in latent space — there's no reason for two adjacent latents to decode to similar images. With it, the latents pile up near the origin, the prior matches the aggregate posterior, and `N(0, I)` becomes a usable sampling distribution.
 
 ## Files
 
@@ -156,17 +156,7 @@ What to watch:
 - **`recon` falls fast at first, then slows.** Reconstruction quickly learns to roughly match the digit; the slow tail is sharpening edges and strokes.
 - **`KL` rises over training.** Counter-intuitive but correct: at init, both `mu` and `logvar` are near zero, so KL is tiny. As the encoder learns to actually *use* the latent space (place different digits at different `mu`), KL grows. KL = 0 means the posterior collapsed and the latent is unused (a known VAE failure mode).
 
-### 3. The math, briefly
-
-Three ideas to lock in.
-
-**Why a sample, not just `mu`?** A deterministic autoencoder maps every image to a single point. If you decode any *other* point — say, `mu + 0.1·v` — you get nothing useful, because nothing during training trained the decoder to handle non-encoded points. The reparameterized sample injects noise *during training*, forcing the decoder to be robust around each `mu`. Combined with the KL term, this turns the latent space into a continuous manifold rather than a finite set of points.
-
-**Why `logvar`, not `σ`?** A Linear layer can output any real value. `logvar` can be negative (small variance) or positive (large variance), no constraint needed. `σ` would have to be strictly positive — you'd need an exp/softplus head and worry about numerical precision. Using `logvar` is the standard VAE convention and the math is cleaner: `σ = exp(0.5 · logvar)`.
-
-**Why `beta`?** Different tasks want different priors. For pure generative quality you want `beta = 1` (the proper ELBO). For learning *disentangled* latent dimensions you want `beta > 1` (β-VAE: each dim of `z` ends up encoding a single semantic factor, at the cost of recon quality). For sharp reconstructions only, `beta < 1` (relaxes the KL pressure). The Stable Diffusion VAE uses `beta ≈ 1e-6` — a tiny KL weight, because the diffusion model on top of it provides most of the regularization. We default to `beta = 1` because it's the textbook setup.
-
-### 4. Reconstruct, sample, interpolate
+### 3. Reconstruct, sample, interpolate
 
 ```bash
 python visualize.py --mode all
@@ -186,7 +176,7 @@ python visualize.py --mode sample
 python visualize.py --mode interpolate --n 16
 ```
 
-### 5. Experiment with `beta`
+### 4. Experiment with `beta`
 
 Train three models at different KL weights and compare:
 
@@ -212,7 +202,7 @@ What to look for:
 
 The trade-off — recon quality vs latent-space quality — is the whole reason the β-VAE knob exists.
 
-### 6. Experiment with `latent_dim`
+### 5. Experiment with `latent_dim`
 
 ```bash
 python train.py --latent-dim 2   --save-path vae_z2.pt    # extreme bottleneck
