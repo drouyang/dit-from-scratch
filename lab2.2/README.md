@@ -20,18 +20,34 @@ Generate this plot yourself with `python visualize.py --mode data` (no model che
 
 ### What the model learns to do
 
-Given a class label `c` (which cluster) and a starting point drawn from pure noise `N(0, I)`, the model has to **transport the noise point to a sample from cluster c**. Concretely:
+The model learns a **velocity field over the 2-D plane** — a function that says "if a point is at position `x` at time `t`, conditioned on class `c`, which direction should it move?"
 
 ```
-input:   point x_t  ∈ R²   (somewhere along the noise → data trajectory)
-         time t    ∈ [0, 1]
-         class c   ∈ {0, ..., 7}
-output:  velocity v ∈ R²   (direction to move at this point and time)
+input:   x  ∈ R²        — a 2-D point
+         t  ∈ [0, 1]    — time
+         c  ∈ {0..7}    — class label
+output:  v  ∈ R²        — velocity (direction of motion)
 ```
 
-At training time, the model sees points along the straight-line path between random data points and random noise, with a class label, and learns the velocity that connects them. At sampling time you start from `x ~ N(0, I)` (anywhere in the plane) and follow the learned velocity field — iteratively step `x ← x + Δt · v(x, t, c)` from `t=1` toward `t=0`. After enough steps, `x` lands inside the cluster for class `c`.
+**At training time**, the model is shown points sampled from the straight-line interpolation between data and noise:
 
-So the model is learning a **velocity field over the 2-D plane**: at every `(x, t, c)` triple, "which direction should this point move to end up in cluster `c`?" The `trajectory.png` figure later will show those flow paths explicitly — straight lines from random starting points to the eight cluster centers.
+```
+x_0  ~ data  (one of the 8 clusters, radius ≈ 5)
+x_1  ~ N(0, I)                  (noise, near origin)
+t    ~ Uniform[0, 1]
+x_t  =  (1 - t) · x_0  +  t · x_1                ← what the model sees
+v*   =  x_1 - x_0                                ← the supervision target
+```
+
+So `x_t` lies somewhere on the line between a data point and a noise point. Repeated for many random `(x_0, x_1, t)` triples, the model learns the velocity over the entire region those lines fill — roughly the disk of radius 5.
+
+**At sampling time**, you start at `x = x_1 ~ N(0, I)` (i.e., `x_t` at `t=1`, well outside any cluster) and integrate backward by Euler steps:
+
+```
+x ← x  +  (t_next - t) · model(x, t, c)         from t = 1 down to t = 0
+```
+
+When `t` reaches 0, `x` lands inside the cluster for class `c` — you've traversed one straight-line trajectory through the velocity field, from noise to data. `trajectory.png` shows those paths explicitly: straight lines from random starting points to the eight cluster centers.
 
 ## The forward process
 
