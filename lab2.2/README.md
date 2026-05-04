@@ -4,21 +4,19 @@
 
 **Goal**: train a small denoiser on a 2-D toy distribution using **flow matching** (the production-grade training paradigm used by SD3, FLUX, Lumina-T2X, etc.) with **classifier-free guidance (CFG)**. Visualize how the model flows points from noise to data, how few sampling steps it actually needs, and how CFG controls conditioning strength. A brief comparison with DDPM (the historical paradigm) shows what flow matching replaced and why.
 
-**Why this matters for DiT**: this lab is the *training paradigm* DiT will use end-to-end. Different network (DiT instead of MLP), different data (image latents instead of 2-D points), but the loss, the sampler, and the CFG mechanism are all *exactly* what you build here. Lab 3.2 will load the same training loop and swap in a DiT + VAE.
+**Why this matters for DiT**: this lab is the *training paradigm* DiT will use end-to-end. The MLP here gets swapped for a DiT in lab 3.2, and the 2-D points get swapped for image latents — but the loss, the sampler, and the CFG mechanism stay exactly the same. Lab 3.2 reuses this training loop verbatim with a DiT + VAE plugged in.
 
 ## Why a 2-D toy
 
 Production diffusion models all operate on tensors with thousands or millions of dimensions, but every paper still falls back to a 2-D toy at some point — because at 2-D you can **see the entire latent space** as a scatter plot. You can watch points flow from `N(0, I)` to the data distribution. You can see CFG concentrate samples toward their target mode. You can verify that flow matching converges in 2 steps where DDPM needs 100. None of that is visible at higher dimensions.
 
-The dataset here is **8 Gaussians** — eight unit-variance modes arranged on a circle of radius 5. Class label = which mode. Multi-modal so generation is non-trivial; class-conditional so CFG is meaningful.
+The dataset here is **8 Gaussians** — eight small Gaussian blobs (std = 0.3) whose centers sit on a circle of radius 5. Class label = which blob. Multi-modal so generation is non-trivial (the model has to learn eight distinct clusters, not just produce one mean); class-conditional so CFG is meaningful (the label says *which* cluster to generate).
 
-```
-   ★         ★
-        ★ ★ ★
-   ★         ★          (8 mode centers)
-        ★ ★ ★
-   ★         ★
-```
+<p align="center">
+  <img src="data_distribution.svg" alt="8 Gaussians dataset" width="500">
+</p>
+
+Generate this plot yourself with `python visualize.py --mode data` (no model checkpoint needed).
 
 ## The forward process
 

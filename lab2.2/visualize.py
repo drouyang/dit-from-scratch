@@ -73,6 +73,35 @@ def _add_centers(ax, radius=5.0):
     ax.set_aspect("equal")
 
 
+def fig_data(save, n_per_class=200):
+    """Plot the raw 8-Gaussians dataset. No model needed."""
+    from data import sample_8gaussians
+    torch.manual_seed(0)
+    x, y = sample_8gaussians(n_per_class * NUM_CLASSES)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    # Rasterize the scatter so the SVG stays small (axes/text remain vector).
+    sc = ax.scatter(x[:, 0], x[:, 1], c=y, cmap="tab10", s=8, alpha=0.6,
+                    rasterized=True)
+    centers = mode_centers()
+    ax.scatter(centers[:, 0], centers[:, 1], marker="x", s=120, c="black",
+               linewidths=2, zorder=10)
+    for i in range(NUM_CLASSES):
+        ax.annotate(str(i), (centers[i, 0].item(), centers[i, 1].item()),
+                    xytext=(8, 8), textcoords="offset points",
+                    fontsize=12, fontweight="bold")
+    ax.set_xlim(-7, 7)
+    ax.set_ylim(-7, 7)
+    ax.set_aspect("equal")
+    ax.set_title("8 Gaussians  (radius = 5, std = 0.3, 8 classes)")
+    ax.grid(True, alpha=0.3)
+    plt.colorbar(sc, ticks=range(NUM_CLASSES), label="class")
+    plt.tight_layout()
+    plt.savefig(save, bbox_inches="tight")
+    plt.close(fig)
+    print(f"saved {save}")
+
+
 @torch.no_grad()
 def fig_samples(model, ckpt, save, device, n_per_class=200, n_steps=50, cfg_scale=1.0):
     out, classes = sample_from_ckpt(model, ckpt, n_per_class, n_steps, cfg_scale, device)
@@ -161,7 +190,7 @@ def fig_cfg(model, ckpt, save, device, n_per_class=200, n_steps=50,
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ckpt",        default="model_fm.pt")
-    p.add_argument("--mode",        choices=["samples", "trajectory", "steps", "cfg", "all"],
+    p.add_argument("--mode",        choices=["data", "samples", "trajectory", "steps", "cfg", "all"],
                                     default="all")
     p.add_argument("--save-prefix", default="")
     p.add_argument("--steps",       type=int,   default=50)
@@ -170,10 +199,18 @@ def main():
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
-    device = get_device()
-    model, ckpt = load_model(args.ckpt, device)
     pfx = args.save_prefix
 
+    # Data plot: no model needed.
+    if args.mode == "data":
+        fig_data(save=f"{pfx}data_distribution.svg")
+        return
+
+    device = get_device()
+    model, ckpt = load_model(args.ckpt, device)
+
+    if args.mode == "all":
+        fig_data(save=f"{pfx}data_distribution.svg")
     if args.mode in ("samples", "all"):
         fig_samples(model, ckpt, save=f"{pfx}samples.png", device=device,
                     n_steps=args.steps, cfg_scale=args.cfg_scale)
