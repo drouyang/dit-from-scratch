@@ -6,6 +6,49 @@
 
 **Why this matters for DiT**: this lab is the *training paradigm* DiT will use end-to-end. The MLP here gets swapped for a DiT in lab 3.2, and the 2-D points get swapped for image latents — but the loss, the sampler, and the CFG mechanism stay exactly the same. Lab 3.2 reuses this training loop verbatim with a DiT + VAE plugged in.
 
+## Background: text embeddings
+
+Production text-to-image / text-to-video models (WAN, LTX, SD3, FLUX) condition generation on a **text embedding** — a continuous vector produced by a pretrained text encoder (CLIP, T5, UMT5) from the user's prompt. The DiT then samples from `p(video | embedding)` rather than the unconditional `p(video)`. This lab uses the simplest possible stand-in for that text embedding — a single integer class label `c ∈ {0..7}` — to study the conditioning mechanism in isolation. Lab 3.3 swaps `c` for real text embeddings; the mechanism is identical.
+
+Four things change when you scale from class labels to text embeddings:
+
+**Continuous, not discrete.** Every distinct text input maps to a different point in embedding space. A 200-word prompt isn't a "bigger class" — it's just a more specific point. Same-shape embedding for any prompt length:
+
+```
+"a cat"                                          →  embedding ∈ R^d
+"a cat on a chair"                               →  embedding ∈ R^d
+"a black-and-white cat lounging in sunlight"     →  embedding ∈ R^d
+```
+
+The video DiT never sees the words; it only sees the embedding vector.
+
+**No fixed cluster count.** With 8 classes you have 8 conditional distributions. With text embeddings the conditioning space is *continuous*, so there are effectively infinite distinct conditional distributions — one per point in embedding space. Out-of-distribution prompts (gibberish, super-rare topics) produce worse output because that region of embedding space is sparsely covered by training data.
+
+**The text encoder is pretrained and frozen.** Standard production setup:
+
+```
+  Text encoder (CLIP / T5 / UMT5)        Video DiT
+  ─────────────────────────────         ─────────────────────────
+  pretrained on huge text corpora;       trained on (video, embedding)
+  weights FROZEN during DiT training    pairs via flow matching
+```
+
+The DiT learns to *use* the encoder's outputs but never updates the encoder. Text understanding is decoupled (CLIP/T5 are reused across many tasks); DiT only learns the video-given-embedding mapping.
+
+**Similar embeddings → similar videos.** Text encoders are trained so semantically similar inputs land near each other in embedding space (`"a cat"` ≈ `"a kitten"` ≈ `"a fluffy cat"`). MSE training of the DiT makes the conditional output locally smooth in conditioning: small embedding change → small output change. This is what makes prompt engineering work — iterating from "a cat" to "a fluffy orange tabby in a sunbeam" slides through related regions of the conditioning space, and the generated video shifts accordingly.
+
+**Toy ↔ production:**
+
+| | This lab | Production video |
+|---|---|---|
+| Conditioning input | integer `c ∈ {0..7}` | text embedding ∈ `R^d` |
+| How it enters the model | `nn.Embedding(8, dim)` lookup | frozen text encoder forward |
+| Distinct conditions | 8 | continuous (effectively infinite) |
+| Encoder trained jointly? | the embedding table, yes | text encoder, no (frozen) |
+| Similar conditions → similar outputs | trivial (only 8 conditions) | the property that makes prompts useful |
+
+The DiT's job is the same in both: take a conditioning vector, use it to disambiguate which kind of output to produce. Only the format of the conditioning vector changes.
+
 ## Why a 2-D toy
 
 Production diffusion models all operate on tensors with thousands or millions of dimensions, but every paper still falls back to a 2-D toy at some point — because at 2-D you can **see the entire latent space** as a scatter plot. You can watch points flow from `N(0, I)` to the data distribution. You can see CFG concentrate samples toward their target mode. You can verify that flow matching converges in 2 steps where DDPM needs 100. None of that is visible at higher dimensions.
