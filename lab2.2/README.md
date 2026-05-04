@@ -18,7 +18,7 @@ The dataset used in this lab is **8 Gaussians** — eight small Gaussian blobs (
 
 Four things change when you scale from class labels to text embeddings:
 
-**Continuous, not discrete.** Every distinct text input maps to a different point in embedding space. A 200-word prompt isn't a "bigger class" — it's just a more specific point. Same-shape embedding for any prompt length:
+1. **Continuous, not discrete.** Every distinct text input maps to a different point in embedding space. A 200-word prompt isn't a "bigger class" — it's just a more specific point. Same-shape embedding for any prompt length:
 
 ```
 "a cat"                                          →  embedding ∈ R^d
@@ -28,9 +28,9 @@ Four things change when you scale from class labels to text embeddings:
 
 The video DiT never sees the words; it only sees the embedding vector.
 
-**No fixed cluster count.** With 8 classes you have 8 conditional distributions. With text embeddings the conditioning space is *continuous*, so there are effectively infinite distinct conditional distributions — one per point in embedding space. Out-of-distribution prompts (gibberish, super-rare topics) produce worse output because that region of embedding space is sparsely covered by training data.
+2. **No fixed cluster count.** With 8 classes you have 8 conditional distributions. With text embeddings the conditioning space is *continuous*, so there are effectively infinite distinct conditional distributions — one per point in embedding space. Out-of-distribution prompts (gibberish, super-rare topics) produce worse output because that region of embedding space is sparsely covered by training data.
 
-**The text encoder is pretrained and frozen.** Standard production setup:
+3. **The text encoder is pretrained and frozen.** Standard production setup:
 
 ```
   Text encoder (CLIP / T5 / UMT5)        Video DiT
@@ -41,7 +41,7 @@ The video DiT never sees the words; it only sees the embedding vector.
 
 The DiT learns to *use* the encoder's outputs but never updates the encoder. Text understanding is decoupled (CLIP/T5 are reused across many tasks); DiT only learns the video-given-embedding mapping.
 
-**Similar embeddings → similar videos.** Text encoders are trained so semantically similar inputs land near each other in embedding space (`"a cat"` ≈ `"a kitten"` ≈ `"a fluffy cat"`). MSE training of the DiT makes the conditional output locally smooth in conditioning: small embedding change → small output change. This is what makes prompt engineering work — iterating from "a cat" to "a fluffy orange tabby in a sunbeam" slides through related regions of the conditioning space, and the generated video shifts accordingly.
+4. **Similar embeddings → similar videos.** Text encoders are trained so semantically similar inputs land near each other in embedding space (`"a cat"` ≈ `"a kitten"` ≈ `"a fluffy cat"`). MSE training of the DiT makes the conditional output locally smooth in conditioning: small embedding change → small output change. This is what makes prompt engineering work — iterating from "a cat" to "a fluffy orange tabby in a sunbeam" slides through related regions of the conditioning space, and the generated video shifts accordingly.
 
 **Toy ↔ production:**
 
