@@ -20,14 +20,16 @@ Generate this plot yourself with `python visualize.py --mode data` (no model che
 
 ### What the model learns to do
 
-The model learns a **velocity field over the 2-D plane** — a function that says "if a point is at position `x` at time `t`, conditioned on class `c`, which direction should it move?"
+The model learns a **velocity field over the 2-D plane** — a function that says "if a point is at position `x` at time `t`, conditioned on class `c`, *in which direction and how fast* should it move?"
 
 ```
 input:   x  ∈ R²        — a 2-D point
          t  ∈ [0, 1]    — time
          c  ∈ {0..7}    — class label
-output:  v  ∈ R²        — velocity (direction of motion)
+output:  v  ∈ R²        — velocity vector (encodes both direction AND speed)
 ```
+
+The vector's *direction* says which way to move. Its *magnitude* says how big a step the integrator should take per unit time — important because a point starting near the origin (`x_1 ~ N(0, I)`) needs to travel ~5 units of distance to reach a cluster center, and the velocity magnitude is what carries it that far. A unit vector wouldn't suffice — you'd only travel distance 1 over the integration.
 
 **At training time**, the model is shown points sampled from the straight-line interpolation between data and noise:
 
