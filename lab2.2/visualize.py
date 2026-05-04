@@ -1,21 +1,22 @@
-"""Visualize a trained denoiser on 8 Gaussians.
+"""Visualize a trained denoiser on 8 Gaussians, plus a couple of plots that
+just show the training-data structure (no model required).
 
-Modes:
-  1. samples    — scatter of generated samples colored by class, with mode
-                  centers overlaid for reference
-  2. trajectory — show the Euler/ancestral trajectories of a few samples
-                  flowing from noise (t=1) to data (t=0)
-  3. steps      — same model, same noise, swept across step counts
-                  {1, 2, 4, 8, 16, 50}; visualizes how few steps you can get
-                  away with (the FM headline result)
-  4. cfg        — same model, same noise, swept across CFG scales
-                  {0.0, 1.0, 3.0, 7.0}; visualizes how CFG concentrates samples
-                  toward their conditional mode
+Model-based modes (need a checkpoint):
+  - samples    : scatter of generated samples colored by class
+  - trajectory : Euler trajectories from noise (t=1) to data (t=0)
+  - steps      : same noise, swept across step counts {1, 2, 4, 8, 16, 50}
+  - cfg        : same noise, swept across CFG scales {0, 1, 3, 7}
+
+Data-only modes (no model needed):
+  - data       : the 8 Gaussians distribution itself, colored by class
+  - crossings  : many trajectories sharing the same conditioning class,
+                 to show that they fan from the cluster to noise and
+                 cross at intermediate (x, t) points
 
 Run:
     python visualize.py --mode all
     python visualize.py --mode steps    --ckpt model_fm.pt
-    python visualize.py --mode cfg      --ckpt model_fm.pt
+    python visualize.py --mode crossings   # no checkpoint needed
 """
 
 import argparse
@@ -71,6 +72,78 @@ def _add_centers(ax, radius=5.0):
     ax.set_xlim(-7, 7)
     ax.set_ylim(-7, 7)
     ax.set_aspect("equal")
+
+
+def fig_crossings(save, target_class=3, n_trajectories=80):
+    """Plot many trajectories all conditioned on the SAME class.
+
+    Each trajectory has a different `(x_0, x_1)` pair but shares the class
+    label `c`. Visualizes the fan structure — many lines starting at the
+    tight cluster, fanning out to noise — and the fact that many of them
+    cross at intermediate `(x_t, t, c)` points. The model averages over
+    all such crossings to predict a single velocity per point.
+
+    No model needed — this shows the *training-data* structure.
+    """
+    from data import sample_8gaussians  # noqa: F401  (kept for symmetry)
+    torch.manual_seed(42)
+
+    centers = mode_centers()
+    center_c = centers[target_class]
+    # n_trajectories random data points within cluster `target_class` (std=0.3).
+    x_0 = center_c + 0.3 * torch.randn(n_trajectories, 2)
+    # n_trajectories random N(0, I) noise samples.
+    x_1 = torch.randn(n_trajectories, 2)
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 6.5))
+
+    # Left: full plane with all 8 cluster centers and many class-c trajectories.
+    ax = axes[0]
+    for i in range(n_trajectories):
+        ax.plot([x_0[i, 0], x_1[i, 0]], [x_0[i, 1], x_1[i, 1]],
+                color="steelblue", alpha=0.25, linewidth=0.7, rasterized=True)
+    ax.scatter(x_0[:, 0], x_0[:, 1], s=15, c="steelblue", rasterized=True,
+               label=f"x_0 (data, class {target_class})", zorder=5)
+    ax.scatter(x_1[:, 0], x_1[:, 1], s=15, c="gray", alpha=0.6, rasterized=True,
+               label="x_1 (noise)", zorder=5)
+    ax.scatter(centers[:, 0], centers[:, 1], marker="x", s=100, c="black",
+               linewidths=2, zorder=10)
+    for i in range(NUM_CLASSES):
+        ax.annotate(str(i), (centers[i, 0].item(), centers[i, 1].item()),
+                    xytext=(8, 8), textcoords="offset points",
+                    fontsize=10, fontweight="bold")
+    ax.set_xlim(-7, 7)
+    ax.set_ylim(-7, 7)
+    ax.set_aspect("equal")
+    ax.set_title(f"{n_trajectories} trajectories with same conditioning c={target_class}\n"
+                 f"(different x_0, different x_1)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="lower right")
+
+    # Right: zoom into the crossing region with a query point highlighted.
+    ax = axes[1]
+    for i in range(n_trajectories):
+        ax.plot([x_0[i, 0], x_1[i, 0]], [x_0[i, 1], x_1[i, 1]],
+                color="steelblue", alpha=0.3, linewidth=0.7, rasterized=True)
+    ax.scatter(x_0[:, 0], x_0[:, 1], s=20, c="steelblue", rasterized=True, zorder=5)
+    ax.scatter(x_1[:, 0], x_1[:, 1], s=20, c="gray", alpha=0.6, rasterized=True, zorder=5)
+    ax.scatter(center_c[0], center_c[1], marker="x", s=100, c="black",
+               linewidths=2, zorder=10)
+    query = (center_c[0].item() / 2, center_c[1].item() / 2)  # midway
+    ax.scatter(*query, s=200, c="red", marker="*", zorder=15,
+               label=f"query (x≈{query[0]:.2f},{query[1]:.2f}, t≈0.5)")
+    ax.add_patch(plt.Circle(query, 0.4, color="red", fill=False, linewidth=2, zorder=14))
+    ax.set_xlim(-3, 1)
+    ax.set_ylim(-1, 4)
+    ax.set_aspect("equal")
+    ax.set_title("Zoom: many class-{} trajectories cross\nthrough the same neighborhood".format(target_class))
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="lower right")
+
+    plt.tight_layout()
+    plt.savefig(save, bbox_inches="tight")
+    plt.close(fig)
+    print(f"saved {save}")
 
 
 def fig_data(save, n_per_class=200):
@@ -190,7 +263,7 @@ def fig_cfg(model, ckpt, save, device, n_per_class=200, n_steps=50,
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ckpt",        default="model_fm.pt")
-    p.add_argument("--mode",        choices=["data", "samples", "trajectory", "steps", "cfg", "all"],
+    p.add_argument("--mode",        choices=["data", "crossings", "samples", "trajectory", "steps", "cfg", "all"],
                                     default="all")
     p.add_argument("--save-prefix", default="")
     p.add_argument("--steps",       type=int,   default=50)
@@ -201,9 +274,12 @@ def main():
     torch.manual_seed(args.seed)
     pfx = args.save_prefix
 
-    # Data plot: no model needed.
+    # No-model-needed plots.
     if args.mode == "data":
         fig_data(save=f"{pfx}data_distribution.svg")
+        return
+    if args.mode == "crossings":
+        fig_crossings(save=f"{pfx}trajectory_crossings.svg")
         return
 
     device = get_device()
@@ -211,6 +287,7 @@ def main():
 
     if args.mode == "all":
         fig_data(save=f"{pfx}data_distribution.svg")
+        fig_crossings(save=f"{pfx}trajectory_crossings.svg")
     if args.mode in ("samples", "all"):
         fig_samples(model, ckpt, save=f"{pfx}samples.png", device=device,
                     n_steps=args.steps, cfg_scale=args.cfg_scale)

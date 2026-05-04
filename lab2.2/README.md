@@ -82,6 +82,14 @@ v*   =  x_1 - x_0                                ← the supervision target
 
 So `x_t` lies somewhere on the line between a data point and a noise point. Repeated for many random `(x_0, x_1, t)` triples, the model learns the velocity over the entire region those lines fill — roughly the disk of radius 5.
 
+For a single conditioning class, the training data is a **fan of trajectories** — many lines from different points in the cluster to different noise samples, all sharing the same `c`:
+
+<p align="center">
+  <img src="trajectory_crossings.svg" alt="Trajectories with the same conditioning" width="800">
+</p>
+
+**Left**: 80 different `(x_0, x_1)` pairs, all conditioned on `c=3`. The trajectories form a cone — tight at the cluster, fanning out to the noise region. **Right**: zoom around a query point. Inside the red circle, many class-3 trajectories pass through at roughly the same `t`, each with a slightly different velocity (different `x_0`, different `x_1`). The model is asked to predict ONE velocity for that point, and MSE training makes it predict the **average** of all class-3 velocities passing through. This is exactly the same picture as production text-to-image, where `c=3` becomes a text embedding for, say, "a fluffy orange tabby" and the 80 trajectories become 80 different photos of fluffy orange tabbies all paired with random noise.
+
 **At sampling time**, you start at `x = x_1 ~ N(0, I)` (i.e., `x_t` at `t=1`, well outside any cluster) and integrate backward by Euler steps:
 
 ```
