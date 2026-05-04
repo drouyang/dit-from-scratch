@@ -68,7 +68,7 @@ input:   x  ∈ R²        — a 2-D point
 output:  v  ∈ R²        — velocity vector (encodes both direction AND speed)
 ```
 
-The vector's *direction* says which way to move. Its *magnitude* says how big a step the integrator should take per unit time — important because a point starting near the origin (`x_1 ~ N(0, I)`) needs to travel ~5 units of distance to reach a cluster center, and the velocity magnitude is what carries it that far. A unit vector wouldn't suffice — you'd only travel distance 1 over the integration.
+The vector's *direction* says which way to move. Its *magnitude* says how big a step the integrator should take per unit time — important because a point starting near the origin (`x_1 ~ N(0, I)`) needs to travel ~5 units of distance to reach a cluster center, and the velocity magnitude is what carries it that far.
 
 **At training time**, the model is shown points sampled from the straight-line interpolation between data and noise:
 
