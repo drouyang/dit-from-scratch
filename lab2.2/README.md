@@ -18,6 +18,23 @@ The dataset here is **8 Gaussians** — eight small Gaussian blobs (std = 0.3) w
 
 Generate this plot yourself with `python visualize.py --mode data` (no model checkpoint needed).
 
+### Why we need a class label (the "conditioning" idea)
+
+The class label `c` is what lets you **choose** which cluster gets generated. Without it, the model would have no way to know whether you want cluster 3 or cluster 7 — it would have to average across all eight, and averaging eight directions on a circle gives zero. Concretely: starting from the same noise point, an unconditional model would predict zero velocity (the average of all per-class velocities) and never reach any cluster.
+
+Adding `c` as an input breaks the ambiguity. During training the model sees `(x_t, t, c)` triples where `c` is the class `x_0` came from — `c=3` always means "the supervision target is a cluster-3 velocity," `c=7` always means "the target is a cluster-7 velocity," etc. The model is forced (by the loss) to *use* `c` to disambiguate; ignoring it would mean averaging back to zero. After training, set `c=3` at sampling time and the learned velocity field deterministically transports noise points to cluster 3.
+
+This is the **intuition behind conditioning**: an extra input that tells the model *which kind* of output you want.
+
+```
+class label `c`     ← simplest conditioning (one integer, this lab)
+text prompt          ← richer conditioning (production text-to-image)
+                       e.g. "a cat sitting on a chair" → embedded by CLIP/T5
+                       and fed to the model the same way `c` is here
+```
+
+Lab 3.3 will swap `c` for a text embedding. The mechanism is identical — extra input → model conditions on it → output reflects it. Class labels are just the smallest possible conditioning signal that lets you study the mechanism in isolation.
+
 ### What the model learns to do
 
 The model learns a **velocity field over the 2-D plane** — a function that says "if a point is at position `x` at time `t`, conditioned on class `c`, *in which direction and how fast* should it move?"
