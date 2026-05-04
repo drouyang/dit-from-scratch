@@ -10,17 +10,15 @@
 
 Production diffusion models all operate on tensors with thousands or millions of dimensions, but every paper still falls back to a 2-D toy at some point — because at 2-D you can **see the entire latent space** as a scatter plot. You can watch points flow from `N(0, I)` to the data distribution. You can see CFG concentrate samples toward their target mode. You can verify that flow matching converges in 2 steps where DDPM needs 100. None of that is visible at higher dimensions.
 
-The dataset here is **8 Gaussians** — eight small Gaussian blobs (std = 0.3) whose centers sit on a circle of radius 5. Class label = which blob. Multi-modal so generation is non-trivial (the model has to learn eight distinct clusters, not just produce one mean); class-conditional so CFG is meaningful (the label says *which* cluster to generate).
-
 <p align="center">
   <img src="data_distribution.svg" alt="8 Gaussians dataset" width="500">
 </p>
 
-Generate this plot yourself with `python visualize.py --mode data` (no model checkpoint needed).
-
 ### Why we need a class label (the "conditioning" idea)
 
-The class label `c` is what lets you **choose** which cluster gets generated. Without it, the model would have no way to know whether you want cluster 3 or cluster 7 — it would have to average across all eight, and averaging eight directions on a circle gives zero. Concretely: starting from the same noise point, an unconditional model would predict zero velocity (the average of all per-class velocities) and never reach any cluster.
+The dataset is **8 Gaussians** — eight small Gaussian blobs (std = 0.3) whose centers sit on a circle of radius 5. Each blob is a separate class (`c ∈ {0, …, 7}`), and that class label is the model's "dial" — what lets you **choose** which cluster gets generated.
+
+Without it, the model would have no way to know whether you want cluster 3 or cluster 7. Starting from the same noise point, every class is an equally valid target, so the loss forces the model to predict the **average** of all per-class velocities — and averaging eight directions on a circle gives **zero**. The unconditional model would predict no movement and produce nothing useful.
 
 Adding `c` as an input breaks the ambiguity. During training the model sees `(x_t, t, c)` triples where `c` is the class `x_0` came from — `c=3` always means "the supervision target is a cluster-3 velocity," `c=7` always means "the target is a cluster-7 velocity," etc. The model is forced (by the loss) to *use* `c` to disambiguate; ignoring it would mean averaging back to zero. After training, set `c=3` at sampling time and the learned velocity field deterministically transports noise points to cluster 3.
 
