@@ -18,6 +18,21 @@ The dataset here is **8 Gaussians** — eight small Gaussian blobs (std = 0.3) w
 
 Generate this plot yourself with `python visualize.py --mode data` (no model checkpoint needed).
 
+### What the model learns to do
+
+Given a class label `c` (which cluster) and a starting point drawn from pure noise `N(0, I)`, the model has to **transport the noise point to a sample from cluster c**. Concretely:
+
+```
+input:   point x_t  ∈ R²   (somewhere along the noise → data trajectory)
+         time t    ∈ [0, 1]
+         class c   ∈ {0, ..., 7}
+output:  velocity v ∈ R²   (direction to move at this point and time)
+```
+
+At training time, the model sees points along the straight-line path between random data points and random noise, with a class label, and learns the velocity that connects them. At sampling time you start from `x ~ N(0, I)` (anywhere in the plane) and follow the learned velocity field — iteratively step `x ← x + Δt · v(x, t, c)` from `t=1` toward `t=0`. After enough steps, `x` lands inside the cluster for class `c`.
+
+So the model is learning a **velocity field over the 2-D plane**: at every `(x, t, c)` triple, "which direction should this point move to end up in cluster `c`?" The `trajectory.png` figure later will show those flow paths explicitly — straight lines from random starting points to the eight cluster centers.
+
 ## The forward process
 
 The first thing every diffusion / flow-matching method needs is a **forward process** — a way to gradually destroy data with noise. Flow matching's choice is dramatically simpler than DDPM's:
