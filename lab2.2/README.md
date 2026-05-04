@@ -43,23 +43,8 @@ The DiT learns to *use* the encoder's outputs but never updates the encoder. Tex
 
 4. **Similar embeddings → similar videos.** Text encoders are trained so semantically similar inputs land near each other in embedding space (`"a cat"` ≈ `"a kitten"` ≈ `"a fluffy cat"`). MSE training of the DiT makes the conditional output locally smooth in conditioning: small embedding change → small output change. This is what makes prompt engineering work — iterating from "a cat" to "a fluffy orange tabby in a sunbeam" slides through related regions of the conditioning space, and the generated video shifts accordingly.
 
-**Toy ↔ production:**
-
-| | This lab | Production video |
-|---|---|---|
-| Conditioning input | integer `c ∈ {0..7}` | text embedding ∈ `R^d` |
-| How it enters the model | `nn.Embedding(8, dim)` lookup | frozen text encoder forward |
-| Distinct conditions | 8 | continuous (effectively infinite) |
-| Encoder trained jointly? | the embedding table, yes | text encoder, no (frozen) |
-| Similar conditions → similar outputs | trivial (only 8 conditions) | the property that makes prompts useful |
-
-The DiT's job is the same in both: take a conditioning vector, use it to disambiguate which kind of output to produce. Only the format of the conditioning vector changes.
 
 ## Why a 2-D toy
-
-
-### Why we need a class label (the "conditioning" idea)
-
 
 Production diffusion models all operate on tensors with thousands or millions of dimensions, but every paper still falls back to a 2-D toy at some point — because at 2-D you can **see the entire latent space** as a scatter plot. You can watch points flow from `N(0, I)` to the data distribution. You can see CFG concentrate samples toward their target mode. You can verify that flow matching converges in 2 steps where DDPM needs 100. None of that is visible at higher dimensions.
 
@@ -71,12 +56,6 @@ text prompt          ← richer conditioning (production text-to-image / video)
                        e.g. "a cat sitting on a chair" → embedded by CLIP/T5
                        and fed to the model the same way `c` is here
 ```
-
-**Why do we need conditioning at all?** Without `c`, the model would have no way to know whether you want cluster 3 or cluster 7. Starting from the same noise point, every class is an equally valid target, so the loss forces the model to predict the **average** of all per-class velocities — and averaging eight directions on a circle gives **zero**. The unconditional model would predict no movement and produce nothing useful.
-
-Adding `c` as an input breaks the ambiguity. During training the model sees `(x_t, t, c)` triples where `c` is the class `x_0` came from — `c=3` always means "the supervision target is a cluster-3 velocity," `c=7` always means "the target is a cluster-7 velocity," etc. The model is forced (by the loss) to *use* `c` to disambiguate; ignoring it would mean averaging back to zero. After training, set `c=3` at sampling time and the learned velocity field deterministically transports noise points to cluster 3.
-
-**The deeper reason conditional models make more sense than unconditional ones.** Real data is rarely a single uniform distribution — it's a mixture of many distinct *kinds*. "All photos" isn't one distribution; photos of cats, photos of dogs, photos of cars are each their own. The unconditional objective `p(x)` asks the model to capture every kind *plus* their relative frequencies, all at once. The conditional objective `p(x | c)` lets the model focus on **one kind at a time** — a smaller, sharper task that matches how data is naturally structured. And it gives the user a way to ask for what they want: text-to-image without a text prompt would just hand you something random from the entire visual world. So conditioning isn't a workaround for the averaging-to-zero failure; it's the *right* way to model data that has structure. Every production text-to-image and text-to-video model is conditional for exactly this reason — the unconditional case is the degenerate extreme, useful for studying training dynamics but not what you'd ever deploy.
 
 ### What the model learns to do
 
