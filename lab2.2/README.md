@@ -21,7 +21,7 @@ The dataset is **8 Gaussians** — eight small Gaussian blobs (std = 0.3) whose 
 **This 8-class label is the toy stand-in for a text prompt in production.** SD3, FLUX, WAN, LTX all condition on text — "a cat on a chair" or "a video of a sunset" — embedded by a text encoder (CLIP, T5) and fed into the model. We use a single integer here for the same reason every diffusion paper does: it's the simplest possible conditioning signal, which lets you study the conditioning mechanism in isolation. Lab 3.3 swaps `c` for a real text embedding; the mechanism is identical.
 
 ```
-class label `c`     ← simplest conditioning (one integer, this lab)
+class label `c`      ← simplest conditioning (one integer, this lab)
 text prompt          ← richer conditioning (production text-to-image / video)
                        e.g. "a cat sitting on a chair" → embedded by CLIP/T5
                        and fed to the model the same way `c` is here
