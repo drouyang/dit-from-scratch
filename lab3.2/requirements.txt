@@ -1,0 +1,12 @@
+torch>=2.1
+numpy<2.4
+matplotlib>=3.7
+
+# Frozen pretrained models
+diffusers>=0.27        # SD-VAE encoder/decoder via AutoencoderKL
+transformers>=4.40     # CLIP text encoder + tokenizer
+safetensors>=0.4       # checkpoint loading
+
+# Dataset
+datasets>=2.18         # tiny COCO subset via HuggingFace datasets
+Pillow>=10
