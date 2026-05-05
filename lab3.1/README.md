@@ -50,31 +50,6 @@ output: v ∈ R^(1,28,28)    — predicted velocity (same shape as input)
 
 Lab 2.2 had a 2-D analogue of this — a velocity field over the plane. Here the field lives in 784-dimensional pixel space, and the "clusters" are the regions of pixel space where digits of each class actually exist. CFG concentrates samples toward those regions, just like it concentrated 2-D points around their cluster centers in lab 2.2.
 
-**Training (verbatim from lab 2.2's training loop)**:
-
-```python
-x_0, y = next(loader)                     # MNIST batch
-t = torch.rand(B)
-x_t, _, target_v = fm_q_sample(x_0, t)    # straight-line interpolation
-pred = model(x_t, t, y)                   # ← only this line changes vs 2.2
-loss = (pred - target_v).pow(2).mean()
-loss.backward(); optim.step()
-```
-
-The MLP is now a DiT. Everything else — `fm_q_sample`, MSE on velocity, AdamW — is from `lab2.2/`.
-
-**Sampling (verbatim from lab 2.2's Euler sampler)**:
-
-```python
-x = torch.randn(N, 1, 28, 28)             # noise
-for t in linspace(1.0, 0.0, n_steps + 1):
-    v = model(x, t, c)                    # or CFG-extrapolated
-    x += dt * v                           # Euler step
-return x                                  # generated images
-```
-
-Same sampler. The only difference from `lab2.2/flow.py` is that `x.shape` is `(N, 1, 28, 28)` instead of `(N, 2)`. That single change is reflected in `flow.py` here — `fm_euler_sample` takes a `shape` tuple instead of a scalar `dim`. The body is unchanged.
-
 ## The three DiT-specific ideas
 
 Read `dit.py` top to bottom; it walks through these in order. The three ideas:
