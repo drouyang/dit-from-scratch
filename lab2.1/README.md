@@ -130,7 +130,7 @@ The architecture is lab 1.2's encoder/decoder, with two changes:
 Python 3.9+. From `lab2.1/`:
 
 ```bash
-python -m venv venv && source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 

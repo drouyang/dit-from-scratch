@@ -94,7 +94,7 @@ Reaching val loss ≈ 1.3 in 5000 steps on the default config typically gives Sh
 Python 3.9+. From `lab1.4/`:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -175,7 +175,7 @@ Knobs:
 
 ```bash
 cd demo
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python app.py   # opens http://127.0.0.1:7860
 ```

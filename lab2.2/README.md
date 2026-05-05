@@ -230,7 +230,7 @@ See `cfg.png` for the visualization. Production text-to-image models typically u
 Python 3.9+. From `lab2.2/`:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 

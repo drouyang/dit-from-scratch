@@ -96,7 +96,7 @@ That's the entire mechanism. ~30 lines of remap + 4 transposes + 2 skips = OpenA
 Python 3.9+. From `lab1.5/`:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 

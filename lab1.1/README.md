@@ -36,7 +36,7 @@ Concretely, what gets learned is a stack of matrices (`784→512`, `512→256`, 
 Python 3.9+. From `lab1.1/`:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
