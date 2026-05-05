@@ -20,6 +20,7 @@ Run:
 """
 
 import argparse
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import torch
@@ -274,20 +275,24 @@ def main():
     torch.manual_seed(args.seed)
     pfx = args.save_prefix
 
-    # No-model-needed plots.
+    # Model-independent plots go in img/ — they're embedded in the README.
+    # Skip when a save-prefix is set (those are for per-model PNG outputs).
+    img_dir = Path("img")
+    if not pfx:
+        img_dir.mkdir(exist_ok=True)
     if args.mode == "data":
-        fig_data(save=f"{pfx}data_distribution.svg")
+        fig_data(save=str(img_dir / "data_distribution.svg"))
         return
     if args.mode == "crossings":
-        fig_crossings(save=f"{pfx}trajectory_crossings.svg")
+        fig_crossings(save=str(img_dir / "trajectory_crossings.svg"))
         return
 
     device = get_device()
     model, ckpt = load_model(args.ckpt, device)
 
-    if args.mode == "all":
-        fig_data(save=f"{pfx}data_distribution.svg")
-        fig_crossings(save=f"{pfx}trajectory_crossings.svg")
+    if args.mode == "all" and not pfx:
+        fig_data(save=str(img_dir / "data_distribution.svg"))
+        fig_crossings(save=str(img_dir / "trajectory_crossings.svg"))
     if args.mode in ("samples", "all"):
         fig_samples(model, ckpt, save=f"{pfx}samples.png", device=device,
                     n_steps=args.steps, cfg_scale=args.cfg_scale)

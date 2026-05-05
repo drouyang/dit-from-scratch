@@ -13,7 +13,7 @@ Production text-to-image / text-to-video models (WAN, LTX, SD3, FLUX) condition 
 The dataset used in this lab is **8 Gaussians** — eight small Gaussian blobs (std = 0.3) whose centers sit on a circle of radius 5. Each blob is a separate class (`c ∈ {0, …, 7}`).
 
 <p align="center">
-  <img src="data_distribution.svg" alt="8 Gaussians dataset" width="500">
+  <img src="img/data_distribution.svg" alt="8 Gaussians dataset" width="500">
 </p>
 
 Four things change when you scale from class labels to text embeddings:
@@ -85,7 +85,7 @@ So `x_t` lies somewhere on the line between a data point and a noise point. Repe
 For a single conditioning class, the training data is a **fan of trajectories** — many lines from different points in the cluster to different noise samples, all sharing the same `c`:
 
 <p align="center">
-  <img src="trajectory_crossings.svg" alt="Trajectories with the same conditioning" width="800">
+  <img src="img/trajectory_crossings.svg" alt="Trajectories with the same conditioning" width="800">
 </p>
 
 **Left**: 80 different `(x_0, x_1)` pairs, all conditioned on `c=3`. The trajectories form a cone — tight at the cluster, fanning out to the noise region. **Right**: zoom around a query point. Inside the red circle, many class-3 trajectories pass through at roughly the same `t`, each with a slightly different velocity (different `x_0`, different `x_1`). The model is asked to predict ONE velocity for that point, and MSE training makes it predict the **average** of all class-3 velocities passing through. This is exactly the same picture as production text-to-image, where `c=3` becomes a text embedding for, say, "a fluffy orange tabby" and the 80 trajectories become 80 different photos of fluffy orange tabbies all paired with random noise.
