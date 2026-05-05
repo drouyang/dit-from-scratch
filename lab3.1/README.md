@@ -233,29 +233,58 @@ A pure attention layer is **permutation-equivariant**: shuffle the input tokens 
 
 Modern DiT-family models (SD3, FLUX, Lumina-T2X) use **RoPE** instead, and that's what `dit.py` implements.
 
-**The intuition.** Attention's logit between a query at position `p_q` and a key at position `p_k` is just their dot product `Q · K`. We want that logit to depend on the *relative* position `(p_q − p_k)` — "is this patch one to the left, or three above" — not on the absolute indices. RoPE achieves this by **rotating** each Q and K vector by an angle proportional to its position. Rotation preserves vector magnitude (it's an orthogonal transformation), so it doesn't change *how strong* the attention is — only *who matches whom*. When Q and K are both rotated, their dot product picks up a phase that depends only on the *difference* of rotation angles, i.e., the relative position. So the attention logit becomes "how aligned are these vectors *after both have been rotated by their respective positions*?" — and that's a function of `(p_q − p_k)` for free.
+**The intuition.** Attention's logit between a query at position `p_q` and a key at position `p_k` is `Q · K`. We want that logit to depend on the *relative* position `(p_q − p_k)` — "is this patch one to the left, or three above" — not on the absolute indices. RoPE achieves this by **rotating** Q and K by angles proportional to their positions. Rotation preserves vector magnitude (it's an orthogonal transformation), so it doesn't change how strong the attention is — only what aligns with what. When Q and K are both rotated, their dot product becomes a function of the *difference* of rotation angles, i.e., the relative position. So the attention logit becomes "how aligned are these vectors **after both have been rotated by their respective positions**?" — and that's a function of `(p_q − p_k)` for free.
 
-A concrete way to see it: think of each consecutive pair of dimensions `(2i, 2i+1)` as a 2-D vector. RoPE rotates that pair by an angle `p · θ_i` based on the position. Different `θ_i` for different pairs encodes relative position at *multiple scales* — fast-rotating pairs (large `θ_i`) capture fine local offsets, slow-rotating pairs (small `θ_i`) capture coarse long-range offsets. Same multi-scale trick the sinusoidal time embedding uses for `t`.
+For each pair of dimensions `(2i, 2i+1)` of Q (and K), at position `p`, rotate that pair by angle `p · θ_i` where `θ_i = 1 / 10000^(2i/d)`. Different `θ_i` for different pairs encodes relative position at multiple scales — fast-rotating pairs (large `θ_i`) capture fine local offsets, slow-rotating pairs (small `θ_i`) capture coarse long-range offsets. Same multi-scale trick the sinusoidal time embedding uses for `t`.
 
-**1-D RoPE in one paragraph.** For each consecutive pair of dims `(2i, 2i+1)` of `Q` (and `K`), at position `p`, rotate that pair by angle `p · θ_i` where `θ_i = 1 / 10000^(2i/d)`. Because the rotation is identical on `Q` and `K`, the dot product `Q · K` becomes a function of `(q_pos − k_pos)` — purely *relative* position, baked directly into the attention logits with **zero added parameters**. (This is one of the cleanest mechanism-level ideas in the post-Transformer literature; the math is in `apply_rope`.)
-
-**2-D extension.** Image patches have `(h, w)` coordinates, not a scalar position. Split each head's `head_dim` into halves: rotate the first half by the row index `h`, the second half by the column index `w`. After the dot product, the y-half depends on `(h_q − h_k)` and the x-half on `(w_q − w_k)`. The model gets relative-y *and* relative-x for free.
+**Worked example on a 4×4 image grid.** Take a Q at position `(2, 3)` on this patch grid:
 
 ```
-head_dim = 32
-   ┌────────────────┬────────────────┐
-   │  16 dims:      │  16 dims:      │
-   │  rotate by h   │  rotate by w   │
-   └────────────────┴────────────────┘
-       y-RoPE              x-RoPE
+   col→  0      1      2      3
+ row↓  ┌──────┬──────┬──────┬──────┐
+   0   │      │      │      │      │
+       ├──────┼──────┼──────┼──────┤
+   1   │      │      │      │      │
+       ├──────┼──────┼──────┼──────┤
+   2   │      │      │      │  Q   │  ← query at (2, 3)
+       ├──────┼──────┼──────┼──────┤
+   3   │      │      │      │      │
+       └──────┴──────┴──────┴──────┘
 ```
 
-Implementation lives in `rope_freqs` (precompute the cos/sin tables once for the fixed `7×7` grid) and `apply_rope` (rotate dim pairs of Q and K). RoPE is *not* applied to V — positions matter for **who attends to whom**, not for the content being routed.
+For 2-D RoPE, split `head_dim` in half — first half rotates by row `h`, second half by column `w`. With one frequency per axis (using `θ = π/4` for clean arithmetic; real RoPE uses much smaller values), the rotated dot product against a key at `(h_k, w_k)` becomes:
+
+```
+logit  ≈  cos((h_q − h_k) · π/4) · ⟨q_h, k_h⟩       (row-axis content alignment)
+        + cos((w_q − w_k) · π/4) · ⟨q_w, k_w⟩       (col-axis content alignment)
+        + (smaller sin cross-terms)
+```
+
+For Q = (2, 3) vs four candidate keys:
+
+| K position | Δh | Δw | row cos | col cos |
+|---|---|---|---|---|
+| **(2, 3)** — same patch | 0 | 0 | cos(0) = **1.00** | cos(0) = **1.00** |
+| **(1, 3)** — directly above | +1 | 0 | cos(π/4) ≈ 0.71 | 1.00 |
+| **(2, 2)** — directly left | 0 | +1 | 1.00 | 0.71 |
+| **(0, 0)** — far up-and-left | +2 | +3 | cos(π/2) = **0.00** | cos(3π/4) ≈ −0.71 |
+
+If Q's content vectors aligned equally with all K's, this alone would produce a cos-shaped attention peak at the same position falling off with distance — a built-in soft locality bias.
+
+But the model isn't stuck with that pattern. By shaping Q and K's content vectors during training, different attention heads can learn different relative-offset preferences. Three example patterns the same RoPE-2D mechanism can express:
+
+- **Local head**: content vectors uniform → cos modulation gives a soft locality bias (attend to neighbors).
+- **Directional head**: Q/K shaped to peak at a specific `(Δh, Δw)` — e.g., "always look up-and-to-the-left."
+- **Global head**: small content magnitude → cos modulation is a small ripple; attention mostly content-based, position-independent.
+
+These are all *learnable* in the same model. Production DiTs end up with heads specializing this way automatically, all from the same RoPE-2D mechanism with zero added parameters.
+
+**Implementation.** `rope_freqs` precomputes the cos/sin tables once for the fixed `7×7` grid; `apply_rope` rotates dim pairs of Q and K. RoPE is *not* applied to V — positions matter for **who attends to whom**, not for the content being routed.
 
 **Why RoPE over learned absolute embeddings.** Three reasons production migrated:
 
 1. **Relative is the right inductive bias for images.** What matters for attention is "this patch is two to the left of that patch", not "this patch is at absolute index 17." RoPE encodes the relative offset directly into the dot product.
-2. **Generalizes across resolutions.** A learned table of size `7 × 7` doesn't extend to a `14 × 14` grid; RoPE just takes a different `(h, w)` index and recomputes the rotation. Production text-to-image models (SD3, FLUX) train on multiple resolutions with the same weights — RoPE makes that trivial.
+2. **Generalizes across resolutions.** A learned table of size `7 × 7` doesn't extend to `14 × 14`; RoPE just takes a different `(h, w)` index and recomputes the rotation. Production text-to-image models (SD3, FLUX) train on multiple resolutions with the same weights — RoPE makes that trivial.
 3. **Zero parameters.** Learned position embeddings add `L · D` parameters; RoPE adds zero.
 
 The trade-off RoPE imposes is `head_dim % 4 == 0` (so each axis half is divisible by 2 for the pair-wise rotation). With `hidden=128, num_heads=4` we have `head_dim=32` ✓.
