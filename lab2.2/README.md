@@ -263,6 +263,10 @@ Produces four figures:
 - **`samples.png`** — 200 samples per class, scattered, colored by class. Mode centers (`★`) overlaid for reference. Should produce eight tight clusters at the eight `★`s.
 - **`trajectory.png`** — straight-line paths from noise to data for a few sample points. You can see flow matching produces *literal straight lines* — that's what "rectified" means.
 - **`steps.png`** — the headline result. Same noise, same model, varying step count from 1 to 50. **N=4 steps already produces well-shaped samples** for this toy. At N=1 you get the right cluster centers but no spread; by N=8 the output is essentially identical to N=50. Few-step sampling is what flow matching unlocks.
+
+  **What each dot means:** the endpoint of one integration trajectory — `x_1 ~ N(0, I)` integrated for `N` Euler steps under a specific class label, producing a final 2-D position. Each panel has the same 800 dots (100 per class × 8 classes), drawn from the same starting noise (same seed). Only the step count `N` changes between panels.
+
+  **Why N=1 collapses to cluster centers:** at the start (`t=1`), the model has no way to tell which *specific* point inside the cluster a given noise vector should head to — it only knows the class. So its prediction is "everyone aim for the cluster mean." With one giant Euler step at full speed in that direction, every starting noise lands exactly at the mean. **Why N=8 recovers the spread:** the model's velocity field has *position-dependent* corrections at intermediate `t` values. Multiple small steps sample those corrections, so different starting positions accumulate different deviations and end up at different points around the cluster — preserving the starting noise's variance as the data's variance.
 - **`cfg.png`** — same noise, varying CFG scale from 0 to 7. At `cfg=0` the model samples from the *unconditional* distribution (all classes mixed); at `cfg=7` samples collapse hard onto the conditional mode center. The 3–7 range is where production models live.
 
 To compare flow matching against DDPM directly:
