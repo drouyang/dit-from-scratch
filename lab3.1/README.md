@@ -2,7 +2,7 @@
 
 > Part 3 — DiT · [DiT from Scratch](../README.md)
 
-**Goal**: assemble the **Diffusion Transformer** — the architecture every modern image / video generator (SD3, FLUX, Lumina-T2X, WAN, LTX-Video) is built around — and train it on MNIST with the flow-matching loss from lab 2.2. By the end you have a class-conditional MNIST generator: pass in `c=7` and out comes a recognizable `7`. Lab 3.2 swaps the pixels for VAE latents; the Capstone swaps the class label for a text embedding. Neither step changes the architecture you build here.
+**Goal**: assemble the **Diffusion Transformer** — the architecture every modern image / video generator (SD3, FLUX, Lumina-T2X, WAN, LTX-Video) is built around — and train it on MNIST with the flow-matching loss from lab 2.2. By the end you have a class-conditional MNIST generator: pass in `c=7` and out comes a recognizable `7`. Lab 3.2 swaps the pixels for VAE latents; lab 3.3 swaps the class label for a text embedding. Neither lab changes the architecture you build here.
 
 **Why this matters for DiT**: this *is* DiT. After lab 1.4 you had a transformer block (LN → attn → +res, LN → MLP → +res); after lab 2.2 you had the flow-matching training loop. The four pieces this lab adds — **patchify**, **AdaLN-Zero conditioning**, **RoPE-2D**, and **class conditioning** — are exactly what turns "a transformer" into "a Diffusion Transformer". Every line that's new here is one of those four; every other line is from labs 1.4 / 2.2.
 
@@ -112,7 +112,7 @@ c = t_embed(t) + class_embed(y)    # (B, hidden)
 - **`t_embed`** — sinusoidal time embedding (same helper as lab 2.2 / lab 1.1) followed by a 2-layer MLP. Output shape `(B, hidden)`.
 - **`class_embed`** — `nn.Embedding(num_classes + 1, hidden)`. The `+1` row is the **null class** for CFG label-dropout, exactly like lab 2.2's `TimeMLP`.
 
-That's it. The rest of the network only ever sees `c`, never the raw `t` or `y`. Treating time and class symmetrically (both → one vector) is what makes the conditioning mechanism trivial to extend at the Capstone — there `c = t_embed(t) + text_embed(prompt)` and the rest of the architecture is unchanged.
+That's it. The rest of the network only ever sees `c`, never the raw `t` or `y`. Treating time and class symmetrically (both → one vector) is what makes the conditioning mechanism trivial to extend in lab 3.3 — there `c = t_embed(t) + text_embed(prompt)` and the rest of the architecture is unchanged.
 
 **Label dropout for CFG** (training):
 
@@ -129,7 +129,7 @@ Same one-liner as lab 2.2's `train.py`. The model learns conditional and uncondi
 v = v_uncond + cfg_scale * (v_cond - v_uncond)
 ```
 
-Same line as `fm_euler_sample` in lab 2.2. Setting `cfg_scale=4.0` at inference time sharpens conditioning — samples concentrate hard on their target class. This is unchanged across labs 2.2, 3.1, 3.2, and the Capstone.
+Same line as `fm_euler_sample` in lab 2.2. Setting `cfg_scale=4.0` at inference time sharpens conditioning — samples concentrate hard on their target class. This is unchanged across labs 2.2, 3.1, 3.2, and 3.3.
 
 ### 3. AdaLN-Zero — the DiT paper's main contribution
 
@@ -338,7 +338,7 @@ A few things worth checking once you've trained:
 - **The training loop.** Sample t uniformly, compute `x_t` with the closed-form forward process, predict velocity, MSE on the supervision target. ~15 lines.
 - **The sampler.** Euler integration of `dx/dt = v(x, t, c)` from t=1 to t=0. Same `fm_euler_sample`, generalized to image shapes.
 - **CFG.** Train with label-dropout to a null class; sample with `v_uncond + s · (v_cond - v_uncond)`. Identical mechanism, paradigm-agnostic.
-- **The conditioning idea.** A single learnable vector per class (with a null slot for CFG) added into the model. The 8-class toy stand-in for text in lab 2.2 → 10-class digit conditioning here → text-embedding conditioning in the Capstone. Same shape of mechanism, different sources for the embedding.
+- **The conditioning idea.** A single learnable vector per class (with a null slot for CFG) added into the model. The 8-class toy stand-in for text in lab 2.2 → 10-class digit conditioning here → text-embedding conditioning in lab 3.3. Same shape of mechanism, different sources for the embedding.
 
 ### What's new in this lab
 
@@ -351,7 +351,7 @@ Four things, all in `dit.py`:
 
 That's the entire architectural delta from lab 1.4 to a modern image DiT. Every other line is shared — and the flow-matching training stack is shared with lab 2.2.
 
-### What changes for lab 3.2 and the Capstone
+### What changes for lab 3.2 and lab 3.3
 
 **Lab 3.2 — Latent DiT.** Plug lab 2.1's VAE in front of and behind the DiT:
 
@@ -363,7 +363,7 @@ That's the entire architectural delta from lab 1.4 to a modern image DiT. Every 
 
 The DiT now operates on *latents* (4 channels, 8× smaller spatial dims) instead of pixels. The training-time changes are tiny: encode the batch with the frozen VAE before running flow matching; everything else (`fm_q_sample`, the loss, the sampler) is unchanged. The DiT *itself* doesn't change at all — only its `in_channels`, `image_size`, and `patch_size` are reconfigured for the latent shape.
 
-**Capstone — Text conditioning.** Swap class labels for text embeddings:
+**Lab 3.3 — Text conditioning.** Swap class labels for text embeddings:
 
 ```
    "a photo of a 7"  ──CLIP/T5──►  text_emb  ──┐
@@ -376,5 +376,5 @@ Two architectural changes: `LabelEmbedder` (an `nn.Embedding`) is replaced by a 
 ### Where to go deeper
 
 - Original DiT paper (Peebles & Xie 2022) — read sections 3 (architecture) and 4.1 (the AdaLN-Zero ablation). The four-way conditioning comparison is the empirical core of the paper.
-- SD3 / MMDiT (Esser et al. 2024) — DiT + latent diffusion + flow matching + multimodal text/image attention, all in one. Reading this paper after labs 2.1, 2.2, 3.1, 3.2, and the Capstone should feel like a tour of mechanisms you've already implemented.
+- SD3 / MMDiT (Esser et al. 2024) — DiT + latent diffusion + flow matching + multimodal text/image attention, all in one. Reading this paper after labs 2.1, 2.2, 3.1, 3.2, and 3.3 should feel like a tour of mechanisms you've already implemented.
 - HuggingFace `diffusers`'s `DiTTransformer2DModel` — production reference implementation; structurally near-identical to `dit.py`, just with more knobs (resolution, channel counts, conditioning sources).

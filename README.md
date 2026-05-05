@@ -3,7 +3,7 @@
 A hands-on path to understanding Diffusion Transformers. Build each prerequisite, then assemble a working latent-space DiT for text-to-image. Part 4 takes you from "I built a tiny one" to "I can read, run, fine-tune, and deploy a real production WAN video model".
 
 - **Time**: 3-6 hours per module (Part 4 is heavier and partly cloud-based)
-- **Stack**: PyTorch + MacBook Pro M3 (Parts 1–3 + Capstone); Part 4 adds rented GPU compute
+- **Stack**: PyTorch + MacBook Pro M3 (Parts 1–3); Part 4 adds rented GPU compute
 
 Each module has its own lab directory with detailed instructions (e.g. `lab1.1/` for Module 1.1).
 
@@ -40,16 +40,13 @@ Put it together.
 |---|---|---|
 | 3.1 | DiT architecture — patchify, AdaLN-Zero, RoPE, class conditioning | [lab3.1](./lab3.1) |
 | 3.2 | Latent DiT — VAE + DiT end-to-end (class-conditional) | [lab3.2](./lab3.2) |
+| 3.3 | Text conditioning — frozen CLIP/T5 + cross-attention; end-to-end mini text-to-image | [lab3.3](./lab3.3) |
 
-## Capstone (after Part 3)
+End of the core curriculum: at this point you've built every component of a modern image DiT from scratch.
 
-**Mini text-to-image.** Take lab 3.2's latent DiT, swap the class-label embedding for **text conditioning** — a frozen CLIP or T5 encoder turns prompts into embeddings; the DiT consumes them via cross-attention (the SD3 / FLUX recipe at small scale). Trained with flow matching + CFG (lab 2.2) on a small text-image dataset. End-to-end "type a prompt, get an image."
+## From image to video — what changes architecturally
 
-The conditioning interface to the DiT is the same as in lab 3.2 — a fixed-shape vector flowing into AdaLN / cross-attention — only the *source* changes (text encoder output instead of an embedding lookup). That's why the swap is a capstone integration step rather than its own lab. End of the core curriculum: at this point you've built every component of a modern image DiT from scratch.
-
-### From image to video — what changes architecturally
-
-Going from a working image DiT (Capstone) to a video DiT (production: WAN, LTX, HunyuanVideo) is a small dimensional extension, not a redesign. Four things change; everything else is unchanged:
+Going from a working image DiT (lab 3.3) to a video DiT (production: WAN, LTX, HunyuanVideo) is a small dimensional extension, not a redesign. Four things change; everything else is unchanged:
 
 1. The VAE becomes a **3D causal VAE** that compresses both spatial and temporal axes, producing latents of shape `(C, T, H, W)`. "Causal" in time means future frames don't leak into past frames during encoding.
 2. Patchify becomes **3D patchify** that tokenizes across time as well as space — patch shape `(p_t, p_h, p_w)` instead of `(p_h, p_w)`.
