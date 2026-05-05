@@ -18,6 +18,33 @@
 
 Where `c = t_embed(t) + class_embed(y)` is the **conditioning vector** that drives every LayerNorm in every block.
 
+**The same diff visualized.** Lab 1.4's GPT block was:
+
+```
+x ─┬─► LN ─► MHA ─┐ ┌─► LN ─► MLP ─┐
+   │              ▼ │              ▼
+   └─────────────►⊕─┴─────────────►⊕─► out
+```
+
+A DiT block adds `c`-driven modulation around each sublayer's LN, gates each sublayer's residual contribution, and rotates Q/K inside MHA via RoPE:
+
+```
+x ─┬─► LN ─► mod(s_a,sc_a) ─► MHA+RoPE ─► × g_a ─┐ ┌─► LN ─► mod(s_m,sc_m) ─► MLP ─► × g_m ─┐
+   │                                             ▼ │                                       ▼
+   └───────────────────────────────────────────►⊕─┴──────────────────────────────────────►⊕─► out
+        ▲                                          ▲
+        │                                          │
+        └─── (s_a, sc_a, g_a, s_m, sc_m, g_m) = adaLN_modulation(c) ─── c = t_embed(t) + class_embed(y)
+```
+
+Same backbone (pre-norm + residual around two sublayers), three new things:
+
+- **`mod(shift, scale)` inside the LN path** — vanilla LN's affine replaced by per-`c` shift+scale.
+- **`× gate` on the residual** — each sublayer's contribution is gated by a per-`c` scalar; zero-init means blocks start as identity.
+- **`MHA+RoPE`** — Q and K get rotated by their (h, w) position before the dot product, so attention sees relative position with zero added parameters.
+
+That's the entire architectural delta from "transformer" to "Diffusion Transformer."
+
 ## Why MNIST and why pixel space
 
 **MNIST.** Same dataset as lab 1.1 (classifier) and lab 2.1 (VAE). 60k 28×28 grayscale digits, 10 classes, fits in memory, trains in minutes on a laptop. Ten classes give CFG something to do (you get 10 distinct conditional distributions instead of 8 toy Gaussians from lab 2.2). And because you've already seen MNIST through a classifier and a VAE, the only new variable is the architecture — exactly what this lab is meant to isolate.
@@ -232,10 +259,6 @@ The lab 1.1 pattern (sinusoidal time → MLP) shows up here too: the conditionin
 A pure attention layer is **permutation-equivariant**: shuffle the input tokens and the outputs shuffle the same way. To break that symmetry the model needs position info. Lab 1.4's GPT solved this with a learned absolute position table — `pos_embed[i]` added to the input before any attention. The original DiT paper used a fixed sin-cos 2-D position embedding the same way.
 
 Modern DiT-family models (SD3, FLUX, Lumina-T2X) use **RoPE** instead, and that's what `dit.py` implements.
-
-**The intuition.** Attention's logit between a query at position `p_q` and a key at position `p_k` is `Q · K`. We want that logit to depend on the *relative* position `(p_q − p_k)` — "is this patch one to the left, or three above" — not on the absolute indices. RoPE achieves this by **rotating** Q and K by angles proportional to their positions. Rotation preserves vector magnitude (it's an orthogonal transformation), so it doesn't change how strong the attention is — only what aligns with what. When Q and K are both rotated, their dot product becomes a function of the *difference* of rotation angles, i.e., the relative position. So the attention logit becomes "how aligned are these vectors **after both have been rotated by their respective positions**?" — and that's a function of `(p_q − p_k)` for free.
-
-For each pair of dimensions `(2i, 2i+1)` of Q (and K), at position `p`, rotate that pair by angle `p · θ_i` where `θ_i = 1 / 10000^(2i/d)`. Different `θ_i` for different pairs encodes relative position at multiple scales — fast-rotating pairs (large `θ_i`) capture fine local offsets, slow-rotating pairs (small `θ_i`) capture coarse long-range offsets. Same multi-scale trick the sinusoidal time embedding uses for `t`.
 
 **Worked example on a 4×4 image grid.** Take a Q at position `(2, 3)` on this patch grid:
 
