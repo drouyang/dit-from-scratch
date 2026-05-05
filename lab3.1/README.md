@@ -342,34 +342,3 @@ Three things, all in `dit.py`:
 
 That's the entire architectural delta from lab 1.4 to a modern image DiT. Every other line is shared — and the flow-matching training stack is shared with lab 2.2.
 
-### What changes for lab 3.2
-
-**Lab 3.2 — Latent text-to-image DiT.** Two changes from this lab, both small:
-
-1. **Latents instead of pixels.** Plug lab 2.1's VAE in front of and behind the DiT:
-
-   ```
-      image  ──VAE.encode──►  z (B, C_lat, H_lat, W_lat)  ──DiT──►  v
-                                                                     │
-      image' ◄─VAE.decode─── z + integrate(v) ◄────────── (sampler) ─┘
-   ```
-
-   The DiT now operates on *latents* (4 channels, 8× smaller spatial dims) instead of pixels. Encode the batch with the frozen VAE before running flow matching; everything else (`fm_q_sample`, the loss, the sampler) is unchanged. The DiT *itself* doesn't change at all — only its `in_channels`, `image_size`, and `patch_size` are reconfigured for the latent shape.
-
-2. **Text instead of class labels.** Swap class labels for text embeddings:
-
-   ```
-      "a photo of a 7"  ──CLIP/T5──►  text_emb  ──┐
-                                                   ▼
-                                        c = t_embed + text_proj(text_emb)
-   ```
-
-   `LabelEmbedder` (an `nn.Embedding`) is replaced by a small `Linear` that projects the frozen text encoder's output to `hidden`-dim, and AdaLN-Zero is augmented with **cross-attention** to the per-token text embeddings (so the model can attend to *individual words* in the prompt, not just the prompt-level summary). The flow-matching stack and the DiT block recipe are otherwise unchanged.
-
-The combination of (1) and (2) is the SD3 / FLUX recipe at small scale. Lab 3.2 trains it end-to-end on a tiny text-image dataset.
-
-### Where to go deeper
-
-- Original DiT paper (Peebles & Xie 2022) — read sections 3 (architecture) and 4.1 (the AdaLN-Zero ablation). The four-way conditioning comparison is the empirical core of the paper.
-- SD3 / MMDiT (Esser et al. 2024) — DiT + latent diffusion + flow matching + multimodal text/image attention, all in one. Reading this paper after labs 2.1, 2.2, 3.1, and 3.2 should feel like a tour of mechanisms you've already implemented.
-- HuggingFace `diffusers`'s `DiTTransformer2DModel` — production reference implementation; structurally near-identical to `dit.py`, just with more knobs (resolution, channel counts, conditioning sources).
