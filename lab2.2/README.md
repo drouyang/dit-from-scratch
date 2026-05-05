@@ -8,7 +8,7 @@
 
 ## Background: text embeddings
 
-Production text-to-image / text-to-video models (WAN, LTX, SD3, FLUX) condition generation on a **text embedding** — a continuous vector produced by a pretrained text encoder (CLIP, T5, UMT5) from the user's prompt. The DiT then samples from `p(video | embedding)` rather than the unconditional `p(video)`. This lab uses the simplest possible stand-in for that text embedding — a single integer class label `c ∈ {0..7}` — to study the conditioning mechanism in isolation. Lab 3.3 swaps `c` for real text embeddings; the mechanism is identical.
+Production text-to-image / text-to-video models (WAN, LTX, SD3, FLUX) condition generation on a **text embedding** — a continuous vector produced by a pretrained text encoder (CLIP, T5, UMT5) from the user's prompt. The DiT then samples from `p(video | embedding)` rather than the unconditional `p(video)`. This lab uses the simplest possible stand-in for that text embedding — a single integer class label `c ∈ {0..7}` — to study the conditioning mechanism in isolation. The Capstone swaps `c` for real text embeddings; the mechanism is identical.
 
 The dataset used in this lab is **8 Gaussians** — eight small Gaussian blobs (std = 0.3) whose centers sit on a circle of radius 5. Each blob is a separate class (`c ∈ {0, …, 7}`).
 
@@ -48,7 +48,7 @@ The DiT learns to *use* the encoder's outputs but never updates the encoder. Tex
 
 Production diffusion models all operate on tensors with thousands or millions of dimensions, but every paper still falls back to a 2-D toy at some point — because at 2-D you can **see the entire latent space** as a scatter plot. You can watch points flow from `N(0, I)` to the data distribution. You can see CFG concentrate samples toward their target mode. You can verify that flow matching converges in just a few Euler steps. None of that is visible at higher dimensions.
 
-**This 8-class label is the toy stand-in for a text prompt in production.** SD3, FLUX, WAN, LTX all condition on text — "a cat on a chair" or "a video of a sunset" — embedded by a text encoder (CLIP, T5) and fed into the model. We use a single integer here for the same reason every diffusion paper does: it's the simplest possible conditioning signal, which lets you study the conditioning mechanism in isolation. Lab 3.3 swaps `c` for a real text embedding; the mechanism is identical.
+**This 8-class label is the toy stand-in for a text prompt in production.** SD3, FLUX, WAN, LTX all condition on text — "a cat on a chair" or "a video of a sunset" — embedded by a text encoder (CLIP, T5) and fed into the model. We use a single integer here for the same reason every diffusion paper does: it's the simplest possible conditioning signal, which lets you study the conditioning mechanism in isolation. The Capstone swaps `c` for a real text embedding; the mechanism is identical.
 
 ```
 class label `c`      ← simplest conditioning (one integer, this lab)
