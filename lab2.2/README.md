@@ -266,6 +266,12 @@ Produces four figures:
 
   **What each dot means:** the endpoint of one integration trajectory — `x_1 ~ N(0, I)` integrated for `N` Euler steps under a specific class label, producing a final 2-D position. Each panel has the same 800 dots (100 per class × 8 classes), drawn from the same starting noise (same seed). Only the step count `N` changes between panels.
 
+  **Two things to look for:**
+
+  1. **Dots scattered into the cluster shape = good.** The training data itself is a cluster with std=0.3, so a working model should *also* produce a cluster with std=0.3. Dots collapsing to a single point (no spread) means the model captured the *mean* but not the *variance* — every random seed would produce the same output, no diversity. Dots spread far beyond the cluster's true std means the model is over-diverse, generating samples the training data doesn't actually contain. Matching the training cluster's spread is the goal.
+
+  2. **Fewer steps to reach that scattered shape = better.** Each Euler step is one model evaluation. FM's straight-line paths converge in 4–8 steps for this toy (50× faster than DDPM, which needs 50–100). At production scale this is the difference between "10–20s per image" and "~2s per image" — and what makes real-time video generation (LTX-style) feasible at all. So you're not just looking for "the model works" but "the model works *with as few steps as possible*."
+
   **Why N=1 collapses to cluster centers:** at the start (`t=1`), the model has no way to tell which *specific* point inside the cluster a given noise vector should head to — it only knows the class. So its prediction is "everyone aim for the cluster mean." With one giant Euler step at full speed in that direction, every starting noise lands exactly at the mean. **Why N=8 recovers the spread:** the model's velocity field has *position-dependent* corrections at intermediate `t` values. Multiple small steps sample those corrections, so different starting positions accumulate different deviations and end up at different points around the cluster — preserving the starting noise's variance as the data's variance.
 - **`cfg.png`** — same noise, varying CFG scale from 0 to 7. At `cfg=0` the model samples from the *unconditional* distribution (all classes mixed); at `cfg=7` samples collapse hard onto the conditional mode center. The 3–7 range is where production models live.
 
