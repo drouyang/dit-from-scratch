@@ -50,6 +50,97 @@ output: v ∈ R^(1,28,28)    — predicted velocity (same shape as input)
 
 Lab 2.2 had a 2-D analogue of this — a velocity field over the plane. Here the field lives in 784-dimensional pixel space, and the "clusters" are the regions of pixel space where digits of each class actually exist. CFG concentrates samples toward those regions, just like it concentrated 2-D points around their cluster centers in lab 2.2.
 
+## Files
+
+| File | What it is |
+| --- | --- |
+| `data.py` | MNIST loader normalized to `[-1, 1]` (matches the unit-variance noise prior) |
+| `dit.py` | `DiT`, `DiTBlock`, `Attention` (MHA + RoPE-2D), `MLP`, `FinalLayer`, `TimestepEmbedder`, `LabelEmbedder`, `rope_freqs` / `apply_rope`, `modulate` |
+| `flow.py` | `fm_q_sample` + `fm_euler_sample` — same as `lab2.2/flow.py`, generalized to image-shape inputs |
+| `train.py` | flow-matching training loop with `--label-dropout` for CFG, AdamW |
+| `sample.py` | sampling CLI; saves a grid of generated digits |
+| `visualize.py` | three figures: `samples.png`, `cfg.png`, `steps.png` |
+
+## Instructions
+
+### 1. Set up
+
+Python 3.9+. From `lab3.1/`:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Training auto-selects device: CUDA → Apple MPS → CPU. MNIST downloads to `./data/` on first run (~12 MB).
+
+### 2. Train
+
+Default: flow matching with CFG label-dropout = 0.1, 20 epochs, batch 128.
+
+```bash
+python train.py
+```
+
+~15 minutes on M3 MPS. Saves `dit.pt`.
+
+Per-step log (one line per `--log-every` steps):
+
+```
+device: mps
+model: 1.87M params  (patch=4, hidden=128, depth=6, heads=4)
+step    200  |   45.3s  |  epoch   1  |  loss 0.7124
+step    400  |   90.1s  |  epoch   1  |  loss 0.5891
+...
+step   9000  |  830.5s  |  epoch  20  |  loss 0.3812
+saved dit.pt
+```
+
+The flow-matching MSE on MNIST plateaus around `0.35–0.40` — that's the floor; getting it lower needs a much bigger model or longer training and won't visibly improve sample quality at this scale.
+
+Useful knobs:
+
+```bash
+python train.py --epochs 40                 # longer training, sharper digits
+python train.py --hidden 192 --depth 8      # ~5M params, better but slower
+python train.py --label-dropout 0.0         # disable CFG (samples ignore class)
+python train.py --patch-size 2              # finer tokens, 196 tokens, 4× slower
+```
+
+### 3. Sample
+
+After training:
+
+```bash
+python sample.py                             # 8 samples/class, cfg=4
+python sample.py --cfg-scale 2.0 --steps 20  # weaker CFG, fewer steps
+python sample.py --class-id 7 --n-per-class 16
+```
+
+Saves a grid to `samples.png`. Rows are classes (0 → 9), columns are independent samples.
+
+### 4. Visualize
+
+```bash
+python visualize.py --mode all
+```
+
+Three figures:
+
+- **`samples.png`** — `n_per_class` samples for each digit, one row per class. With default settings (`steps=50, cfg=4.0`) you should see recognizable digits with reasonable diversity. Some failure modes are expected at this model size — occasional malformed strokes, ambiguous 4/9 or 3/8 confusions.
+
+- **`cfg.png`** — same starting noise across `cfg ∈ {0, 1, 2, 4, 7}`. At `cfg=0` the model samples unconditionally — the class label is ignored, so you see digits that don't necessarily match the row label. At `cfg=1` you get the model's natural conditional distribution (correct class, lots of diversity). At `cfg=4` the conditioning is sharp (correct class, less diversity). At `cfg=7` samples often look over-saturated — the same trade-off you saw in lab 2.2.
+
+- **`steps.png`** — same noise across `n_steps ∈ {1, 2, 4, 8, 16, 50}`. As in lab 2.2, the headline result: very few Euler steps suffice for a flow-matching model. `N=4–8` already produces plausible digits; `N=50` is barely distinguishable from `N=16`. This is the "few-step sampling" advantage that makes diffusion deployable in real-time settings.
+
+### 5. Inspect
+
+A few things worth checking once you've trained:
+
+- `model = DiT(...); print(sum(p.numel() for p in model.parameters()))` — confirm the param count matches what's expected for your config.
+- Forward pass on `torch.randn(2, 1, 28, 28)` at init — the output should be **exactly zero** (AdaLN-Zero starts as the identity, the final-layer linear is zero-initialized). If the output is nonzero at init, something in `_init_weights` got skipped.
+- Pick one block and print `block.adaLN_modulation[-1].weight.abs().mean()` before vs after training — the post-training value should be small but clearly nonzero, showing the gates have learned to dial each sublayer in.
+
 ## The three DiT-specific ideas
 
 Read `dit.py` top to bottom; it walks through these in order. The three ideas:
@@ -188,97 +279,6 @@ unpatchify  ──────────────────────�
 ```
 
 At default config (`patch=4, hidden=128, depth=6, heads=4`) this is **~1.9M parameters** — small enough to train on M3 MPS in ~15 minutes.
-
-## Files
-
-| File | What it is |
-| --- | --- |
-| `data.py` | MNIST loader normalized to `[-1, 1]` (matches the unit-variance noise prior) |
-| `dit.py` | `DiT`, `DiTBlock`, `Attention` (MHA + RoPE-2D), `MLP`, `FinalLayer`, `TimestepEmbedder`, `LabelEmbedder`, `rope_freqs` / `apply_rope`, `modulate` |
-| `flow.py` | `fm_q_sample` + `fm_euler_sample` — same as `lab2.2/flow.py`, generalized to image-shape inputs |
-| `train.py` | flow-matching training loop with `--label-dropout` for CFG, AdamW |
-| `sample.py` | sampling CLI; saves a grid of generated digits |
-| `visualize.py` | three figures: `samples.png`, `cfg.png`, `steps.png` |
-
-## Instructions
-
-### 1. Set up
-
-Python 3.9+. From `lab3.1/`:
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Training auto-selects device: CUDA → Apple MPS → CPU. MNIST downloads to `./data/` on first run (~12 MB).
-
-### 2. Train
-
-Default: flow matching with CFG label-dropout = 0.1, 20 epochs, batch 128.
-
-```bash
-python train.py
-```
-
-~15 minutes on M3 MPS. Saves `dit.pt`.
-
-Per-step log (one line per `--log-every` steps):
-
-```
-device: mps
-model: 1.87M params  (patch=4, hidden=128, depth=6, heads=4)
-step    200  |   45.3s  |  epoch   1  |  loss 0.7124
-step    400  |   90.1s  |  epoch   1  |  loss 0.5891
-...
-step   9000  |  830.5s  |  epoch  20  |  loss 0.3812
-saved dit.pt
-```
-
-The flow-matching MSE on MNIST plateaus around `0.35–0.40` — that's the floor; getting it lower needs a much bigger model or longer training and won't visibly improve sample quality at this scale.
-
-Useful knobs:
-
-```bash
-python train.py --epochs 40                 # longer training, sharper digits
-python train.py --hidden 192 --depth 8      # ~5M params, better but slower
-python train.py --label-dropout 0.0         # disable CFG (samples ignore class)
-python train.py --patch-size 2              # finer tokens, 196 tokens, 4× slower
-```
-
-### 3. Sample
-
-After training:
-
-```bash
-python sample.py                             # 8 samples/class, cfg=4
-python sample.py --cfg-scale 2.0 --steps 20  # weaker CFG, fewer steps
-python sample.py --class-id 7 --n-per-class 16
-```
-
-Saves a grid to `samples.png`. Rows are classes (0 → 9), columns are independent samples.
-
-### 4. Visualize
-
-```bash
-python visualize.py --mode all
-```
-
-Three figures:
-
-- **`samples.png`** — `n_per_class` samples for each digit, one row per class. With default settings (`steps=50, cfg=4.0`) you should see recognizable digits with reasonable diversity. Some failure modes are expected at this model size — occasional malformed strokes, ambiguous 4/9 or 3/8 confusions.
-
-- **`cfg.png`** — same starting noise across `cfg ∈ {0, 1, 2, 4, 7}`. At `cfg=0` the model samples unconditionally — the class label is ignored, so you see digits that don't necessarily match the row label. At `cfg=1` you get the model's natural conditional distribution (correct class, lots of diversity). At `cfg=4` the conditioning is sharp (correct class, less diversity). At `cfg=7` samples often look over-saturated — the same trade-off you saw in lab 2.2.
-
-- **`steps.png`** — same noise across `n_steps ∈ {1, 2, 4, 8, 16, 50}`. As in lab 2.2, the headline result: very few Euler steps suffice for a flow-matching model. `N=4–8` already produces plausible digits; `N=50` is barely distinguishable from `N=16`. This is the "few-step sampling" advantage that makes diffusion deployable in real-time settings.
-
-### 5. Inspect
-
-A few things worth checking once you've trained:
-
-- `model = DiT(...); print(sum(p.numel() for p in model.parameters()))` — confirm the param count matches what's expected for your config.
-- Forward pass on `torch.randn(2, 1, 28, 28)` at init — the output should be **exactly zero** (AdaLN-Zero starts as the identity, the final-layer linear is zero-initialized). If the output is nonzero at init, something in `_init_weights` got skipped.
-- Pick one block and print `block.adaLN_modulation[-1].weight.abs().mean()` before vs after training — the post-training value should be small but clearly nonzero, showing the gates have learned to dial each sublayer in.
 
 ## Discussion
 
