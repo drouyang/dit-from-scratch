@@ -1,7 +1,5 @@
 # Module 2.2 — Flow Matching with Conditioning
 
-> Part 2 — Diffusion Essentials · [DiT from Scratch](../README.md)
-
 **Goal**: train a small denoiser on a 2-D toy distribution using **flow matching** — the production-grade training paradigm used by SD3, FLUX, Lumina-T2X, WAN, LTX, etc. — with **class conditioning** as the simplest stand-in for text conditioning. Visualize how the model flows points from noise to data, how few sampling steps it actually needs, and how **classifier-free guidance (CFG)** controls conditioning strength at sampling time.
 
 **Why this matters for DiT**: this lab is the *training paradigm* DiT will use end-to-end. The MLP here gets swapped for a DiT in lab 3.2, and the 2-D points get swapped for image latents — but the loss, the sampler, and the conditioning mechanism stay exactly the same. Lab 3.2 reuses this training loop verbatim with a DiT + VAE plugged in.

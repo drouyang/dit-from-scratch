@@ -1,7 +1,5 @@
 # Module 1.2 — CNN Basics
 
-> Part 1 — Building Blocks · [DiT from Scratch](../README.md)
-
 **Goal**: learn how CNNs process images by training two models on CIFAR-10 — first a classifier (supervised, easy to evaluate), then an encoder–decoder autoencoder (unsupervised, the direct precursor to the VAE inside DiT).
 
 **Why this matters for DiT**: DiT doesn't operate on raw pixels — it operates on latents produced by a VAE. That VAE is a CNN encoder/decoder. The stride-2 `Conv2d` → `ConvTranspose2d` pattern you build here is the literal architecture of the VAE encoder and decoder in Stable Diffusion and DiT. The classifier gives you intuition for what the encoder learns before you add the decoder and reconstruction loss.

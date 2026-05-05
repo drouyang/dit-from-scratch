@@ -1,7 +1,5 @@
 # Module 3.1 — DiT architecture (patchify, AdaLN-Zero, RoPE-2D, class conditioning)
 
-> Part 3 — DiT · [DiT from Scratch](../README.md)
-
 **Goal**: assemble the **Diffusion Transformer** — the architecture every modern image / video generator (SD3, FLUX, Lumina-T2X, WAN, LTX-Video) is built around — and train it on MNIST with the flow-matching loss from lab 2.2. By the end you have a class-conditional MNIST generator: pass in `c=7` and out comes a recognizable `7`. Lab 3.2 swaps the pixels for VAE latents; lab 3.3 swaps the class label for a text embedding. Neither lab changes the architecture you build here.
 
 **Why this matters for DiT**: this *is* DiT. After lab 1.4 you had a transformer block (LN → attn → +res, LN → MLP → +res); after lab 2.2 you had the flow-matching training loop. The four pieces this lab adds — **patchify**, **AdaLN-Zero conditioning**, **RoPE-2D**, and **class conditioning** — are exactly what turns "a transformer" into "a Diffusion Transformer". Every line that's new here is one of those four; every other line is from labs 1.4 / 2.2.

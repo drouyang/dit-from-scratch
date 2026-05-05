@@ -1,7 +1,5 @@
 # Module 1.3 — Attention (Standalone)
 
-> Part 1 — Building Blocks · [DiT from Scratch](../README.md)
-
 **Goal**: implement scaled dot-product attention and multi-head attention from scratch, prove it matches `torch.nn.MultiheadAttention` numerically, then train an attention-only model on the reverse task to see attention actually learn.
 
 **Why this matters for DiT**: every DiT block is a self-attention layer plus an MLP. The kernel you write here — `softmax(QKᵀ/√d) · V`, split across heads — is the exact operation DiT uses on its patch tokens. Getting it right once in isolation, with no transformer residuals or AdaLN in the way, means you never have to re-derive it later.

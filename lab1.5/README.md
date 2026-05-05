@@ -1,7 +1,5 @@
 # Module 1.5 — GPT-2 family (optional)
 
-> Part 1 — Building Blocks · [DiT from Scratch](../README.md)
-
 **Goal**: take the same `gpt.py` you built in lab 1.4, write a `from_pretrained` classmethod that loads OpenAI's official GPT-2 weights from HuggingFace, and compare the four GPT-2 sizes (124M / 355M / 774M / 1.5B) qualitatively and on standard benchmarks. The point isn't to train anything — it's to make concrete the claim that "GPT-1 → GPT-2 → GPT-3 is the same model bigger."
 
 **Why this is optional**: nothing here is needed for DiT (lab 3). Skip if you're racing toward the diffusion modules. Do it if you want the scaling-law lesson made tangible on weights you can actually load and run.
