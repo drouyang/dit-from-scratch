@@ -133,14 +133,6 @@ Three figures:
 
 - **`steps.png`** — same noise across `n_steps ∈ {1, 2, 4, 8, 16, 50}`. As in lab 2.2, the headline result: very few Euler steps suffice for a flow-matching model. `N=4–8` already produces plausible digits; `N=50` is barely distinguishable from `N=16`. This is the "few-step sampling" advantage that makes diffusion deployable in real-time settings.
 
-### 5. Inspect
-
-A few things worth checking once you've trained:
-
-- `model = DiT(...); print(sum(p.numel() for p in model.parameters()))` — confirm the param count matches what's expected for your config.
-- Forward pass on `torch.randn(2, 1, 28, 28)` at init — the output should be **exactly zero** (AdaLN-Zero starts as the identity, the final-layer linear is zero-initialized). If the output is nonzero at init, something in `_init_weights` got skipped.
-- Pick one block and print `block.adaLN_modulation[-1].weight.abs().mean()` before vs after training — the post-training value should be small but clearly nonzero, showing the gates have learned to dial each sublayer in.
-
 ## The three DiT-specific ideas
 
 Read `dit.py` top to bottom; it walks through these in order. The three ideas:
@@ -163,9 +155,20 @@ self.patch_embed = nn.Conv2d(in_channels, hidden, patch_size, stride=patch_size)
 
 Kernel size = stride = patch size means each `P × P` patch is independently linearly projected to a `hidden`-dim vector. Mathematically identical to `Flatten` + `Linear` per patch, but expressed as a conv so PyTorch can fuse it. After the conv, flatten the spatial dims to get `(B, L, hidden)` with `L = (H/P) × (W/P) = 49` for our 28×28 → 4-patch case.
 
-**Why this is the same as ViT.** Vision Transformer (Dosovitskiy 2020) introduced this trick — *tokens are image patches* — and DiT inherited it directly. The hidden dim acts as the per-patch feature width; deeper / wider DiTs just use more patches and bigger hidden dims. SD3 uses 2×2 patches on 64×64 latents; lab 3.2 will use 2×2 patches on 14×14 MNIST latents from lab 2.1's VAE.
+**Why this is the same as ViT.** Vision Transformer (Dosovitskiy 2020) introduced this trick — *tokens are image patches* — and DiT inherited it directly. The hidden dim acts as the per-patch feature width; deeper / wider DiTs just use more patches and bigger hidden dims. SD3 uses 2×2 patches on 64×64 latents.
 
 **Unpatchify is the inverse.** After the transformer stack, the final layer projects each token back to `P × P × C` numbers, and `unpatchify` re-tiles the patches into a `(B, C, H, W)` image. The model output has the same shape as the input — exactly what flow matching's MSE expects.
+
+**Patchify vs VAE encode (worth distinguishing).** Both are "image ↔ vectors" round-trips, but they do completely different jobs:
+
+| | Patchify / unpatchify | VAE encode / decode |
+|---|---|---|
+| Lossy? | No — pure linear, mathematically invertible | Yes (small reconstruction error even at perfect convergence) |
+| Compresses? | No — usually *expands* per-position (e.g., 4×4×3 = 48 pixels → 384 hidden) | Yes — SD-VAE compresses 256×256×3 ≈ 200k floats → 32×32×4 ≈ 4k floats |
+| Trained how? | The single linear is trained jointly with DiT; no special objective | Separately, with reconstruction loss + KL prior |
+| Purpose | **Format conversion**: image grid → sequence of tokens (so a transformer can consume it) | **Information bottleneck**: compress + regularize the space the DiT operates in |
+
+A clean way to think about it: patchify is to images what `nn.Embedding` is to token IDs in lab 1.4's GPT — *format conversion*, not compression. The VAE (introduced in lab 2.1) is the actual encoder/decoder. In lab 3.2 you'll see both compositions stacked: VAE compresses image → latent, patchify reshapes latent → token sequence, transformer processes, unpatchify reshapes back, VAE decodes to image.
 
 ### 2. AdaLN-Zero — the DiT paper's main contribution
 
