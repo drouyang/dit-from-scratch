@@ -313,15 +313,27 @@ In real training content is *not* uniform — it does most of the work in decidi
 
 These are all *learnable* in the same model. Production DiTs end up with heads specializing this way automatically, all from the same RoPE-2D mechanism with zero added parameters.
 
-**Implementation.** `rope_freqs` precomputes the cos/sin tables once for the fixed `7×7` grid; `apply_rope` rotates dim pairs of Q and K. RoPE is *not* applied to V — positions matter for **who attends to whom**, not for the content being routed.
+**Why different heads learn different things at all** (true in any transformer, not RoPE-specific):
 
-**Why RoPE over learned absolute embeddings.** Three reasons production migrated:
+1. **Independent parameters.** Each head has its own `W_q`, `W_k`, `W_v` projections. They start from different random initializations.
+2. **Gradient descent + capacity pressure.** If two heads converged to the same function, the model is wasting half its capacity. The optimizer gets a stronger gradient signal by spreading work across heads — heads that find a "niche" reduce loss more than redundant heads.
+3. **Empirical observation.** In every trained transformer (text, vision, audio), probing reveals heads specialize: some attend to syntactic neighbors, some to long-range coreference, some to semantic similarity, etc. It emerges, no one programs it in.
 
-1. **Relative is the right inductive bias for images.** What matters for attention is "this patch is two to the left of that patch", not "this patch is at absolute index 17." RoPE encodes the relative offset directly into the dot product.
-2. **Generalizes across resolutions.** A learned table of size `7 × 7` doesn't extend to `14 × 14`; RoPE just takes a different `(h, w)` index and recomputes the rotation. Production text-to-image models (SD3, FLUX) train on multiple resolutions with the same weights — RoPE makes that trivial.
-3. **Zero parameters.** Learned position embeddings add `L · D` parameters; RoPE adds zero.
+**What RoPE-2D adds**: because position is now part of the dot product geometry, the space of features a head can specialize in includes spatial patterns. So the "feature" a head learns can be:
 
-The trade-off RoPE imposes is `head_dim % 4 == 0` (so each axis half is divisible by 2 for the pair-wise rotation). With `hidden=128, num_heads=4` we have `head_dim=32` ✓.
+- **Content-only**: "match cat-edge features wherever they are" — content alignment dominates, position cosine averaged out.
+- **Position-biased**: "match patches that are one step above me" — content shaped to peak when `Δh = +1, Δw = 0`.
+- **Locality**: "trust my neighbors" — content roughly uniform, the bare RoPE cosine carries the day.
+
+So:
+
+> *different heads learn different features* (general fact)
+> +
+> *features can include spatial patterns because position is in the geometry* (RoPE's contribution)
+> =
+> heads naturally specialize into different relative-offset preferences with no extra parameters or supervision.
+
+The DiT gets this for free.
 
 ## Putting it together
 
