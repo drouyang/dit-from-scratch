@@ -18,7 +18,7 @@
 
 Where `c = t_embed(t) + class_embed(y)` is the **conditioning vector** that drives every LayerNorm in every block.
 
-**The same diff visualized.** Lab 1.4's GPT block was:
+Lab 1.4's GPT block was:
 
 ```
 x ─┬─► LN ─► MHA ─┐ ┌─► LN ─► MLP ─┐
