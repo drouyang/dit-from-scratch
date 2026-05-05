@@ -130,33 +130,60 @@ def ddpm_q_sample(x_0, t, schedule, noise=None):
 
 @torch.no_grad()
 def ddpm_sample(model, schedule, n_samples, dim, classes,
-                cfg_scale=1.0, device="cpu"):
-    """Ancestral DDPM sampling: T denoising steps."""
+                cfg_scale=1.0, device="cpu", n_steps=None):
+    """Sample from a DDPM-trained model.
+
+    Two modes:
+      - n_steps is None or >= schedule.T:  full DDPM ancestral sampling
+        (stochastic, T denoising steps; the original DDPM algorithm).
+      - n_steps < schedule.T:  DDIM-style deterministic sub-stepping on
+        the same trained weights — the standard fast-sampling trick.
+        Pick `n_steps` timesteps evenly spaced from {0, ..., T-1} and
+        apply the deterministic DDIM update between consecutive timesteps.
+    """
     T = schedule.T
     null = torch.full_like(classes, model.null_class)
     x = torch.randn(n_samples, dim, device=device)
 
-    for t in reversed(range(T)):
-        t_batch = torch.full((n_samples,), t, device=device, dtype=torch.long)
-        # Model expects continuous t in [0, 1].
+    def _eps(x, t_long):
+        t_batch = torch.full((n_samples,), t_long, device=device, dtype=torch.long)
         t_norm = t_batch.float() / T
-
         if cfg_scale == 1.0:
-            eps = model(x, t_norm, classes)
-        else:
-            eps_cond = model(x, t_norm, classes)
-            eps_uncond = model(x, t_norm, null)
-            eps = eps_uncond + cfg_scale * (eps_cond - eps_uncond)
+            return model(x, t_norm, classes)
+        eps_cond = model(x, t_norm, classes)
+        eps_uncond = model(x, t_norm, null)
+        return eps_uncond + cfg_scale * (eps_cond - eps_uncond)
 
-        beta_t = schedule.betas[t]
-        alpha_t = schedule.alphas[t]
+    if n_steps is None or n_steps >= T:
+        # ── Full DDPM ancestral sampling (stochastic, T steps) ──────────
+        for t in reversed(range(T)):
+            eps = _eps(x, t)
+            beta_t = schedule.betas[t]
+            alpha_t = schedule.alphas[t]
+            alpha_bar_t = schedule.alpha_bars[t]
+            coef = (1 - alpha_t) / (1 - alpha_bar_t).sqrt()
+            mean = (x - coef * eps) / alpha_t.sqrt()
+            if t > 0:
+                sigma = beta_t.sqrt()
+                x = mean + sigma * torch.randn_like(x)
+            else:
+                x = mean
+        return x
+
+    # ── DDIM-style deterministic sub-stepping (n_steps < T) ─────────────
+    # n_steps+1 timesteps from T-1 down to 0 (inclusive), giving n_steps transitions.
+    ts = torch.linspace(T - 1, 0, n_steps + 1).round().long().tolist()
+    for i in range(n_steps):
+        t = ts[i]
+        t_next = ts[i + 1]
+        eps = _eps(x, t)
         alpha_bar_t = schedule.alpha_bars[t]
-        coef = (1 - alpha_t) / (1 - alpha_bar_t).sqrt()
-        mean = (x - coef * eps) / alpha_t.sqrt()
-        if t > 0:
-            sigma = beta_t.sqrt()
-            x = mean + sigma * torch.randn_like(x)
+        # Predict x_0 from current x_t and the noise estimate.
+        x_0_hat = (x - (1 - alpha_bar_t).sqrt() * eps) / alpha_bar_t.sqrt()
+        if t_next == 0 and i == n_steps - 1:
+            # Last step lands at the data point.
+            x = x_0_hat
         else:
-            x = mean
-
+            alpha_bar_next = schedule.alpha_bars[t_next]
+            x = alpha_bar_next.sqrt() * x_0_hat + (1 - alpha_bar_next).sqrt() * eps
     return x

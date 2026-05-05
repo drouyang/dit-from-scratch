@@ -62,6 +62,7 @@ def sample_from_ckpt(model, ckpt, n_per_class, n_steps, cfg_scale, device,
         x = ddpm_sample(
             model, sched, classes.size(0), dim=2,
             classes=classes, cfg_scale=cfg_scale, device=device,
+            n_steps=n_steps,
         )
         return x, classes
 

@@ -174,7 +174,7 @@ return x
 
 That's the entire sampler. (See `steps.png` from the visualize step for how few steps actually suffice in practice.)
 
-DDPM's sampler is more elaborate (`ddpm_sample` in `flow.py`): T ancestral steps with the posterior mean and variance, including the explicit `(1 - α)/√(1 - ᾱ) · ε` denoising correction and stochastic noise injection at each step. On this toy DDPM needs ~50–100 steps for similar quality — *the same model* sampled with a worse algorithm.
+DDPM's sampler is more elaborate (`ddpm_sample` in `flow.py`): T ancestral steps with the posterior mean and variance, including the explicit `(1 - α)/√(1 - ᾱ) · ε` denoising correction and stochastic noise injection at each step. To compare DDPM at variable step counts (since pure ancestral sampling is fixed at T), `ddpm_sample` also supports **DDIM-style deterministic sub-stepping** (Song et al. 2020) — same trained weights, but pick `N` timesteps from the schedule and apply a deterministic update between consecutive ones. On this toy, the DDPM-trained model with DDIM sampling needs ~16–50 steps to converge while flow matching needs ~4–8 — *the same model class* with a curved forward process is fundamentally less step-efficient than flow matching's straight-line one.
 
 ## Classifier-Free Guidance (CFG)
 
@@ -218,7 +218,7 @@ See `cfg.png` for the visualization. Production text-to-image models typically u
 | --- | --- |
 | `data.py` | 8-Gaussians sampler |
 | `mlp.py` | tiny MLP with sinusoidal time embedding + class embedding (with a null slot for CFG) |
-| `flow.py` | `fm_q_sample` + `fm_euler_sample` (flow matching), `ddpm_q_sample` + `ddpm_sample` + `DDPMSchedule` (DDPM comparison) |
+| `flow.py` | `fm_q_sample` + `fm_euler_sample` (flow matching), `ddpm_q_sample` + `ddpm_sample` + `DDPMSchedule` (DDPM comparison; `ddpm_sample` does ancestral sampling at full T, or DDIM-style sub-stepping when `n_steps < T`) |
 | `train.py` | training loop, `--paradigm fm\|ddpm`, `--label-dropout` for CFG |
 | `sample.py` | sampling CLI; auto-picks Euler / ancestral based on the checkpoint's saved paradigm |
 | `visualize.py` | four figures: `samples`, `trajectory`, `steps`, `cfg` |
@@ -270,7 +270,7 @@ Produces four figures:
 
   1. **Dots scattered into the cluster shape = good.** The training data itself is a cluster with std=0.3, so a working model should *also* produce a cluster with std=0.3. Dots collapsing to a single point (no spread) means the model captured the *mean* but not the *variance* — every random seed would produce the same output, no diversity. Dots spread far beyond the cluster's true std means the model is over-diverse, generating samples the training data doesn't actually contain. Matching the training cluster's spread is the goal.
 
-  2. **Fewer steps to reach that scattered shape = better.** Each Euler step is one model evaluation. FM's straight-line paths converge in 4–8 steps for this toy (50× faster than DDPM, which needs 50–100). At production scale this is the difference between "10–20s per image" and "~2s per image" — and what makes real-time video generation (LTX-style) feasible at all. So you're not just looking for "the model works" but "the model works *with as few steps as possible*."
+  2. **Fewer steps to reach that scattered shape = better.** Each Euler step is one model evaluation. FM's straight-line paths converge in 4–8 steps for this toy (4–10× faster than the DDPM-trained model with DDIM sub-stepping, which needs 16–50). At production scale this is the difference between "10–20s per image" and "~2s per image" — and what makes real-time video generation (LTX-style) feasible at all. So you're not just looking for "the model works" but "the model works *with as few steps as possible*."
 
   **Why N=1 collapses to cluster centers:** at the start (`t=1`), the model has no way to tell which *specific* point inside the cluster a given noise vector should head to — it only knows the class. So its prediction is "everyone aim for the cluster mean." With one giant Euler step at full speed in that direction, every starting noise lands exactly at the mean. **Why N=8 recovers the spread:** the model's velocity field has *position-dependent* corrections at intermediate `t` values. Multiple small steps sample those corrections, so different starting positions accumulate different deviations and end up at different points around the cluster — preserving the starting noise's variance as the data's variance.
 - **`cfg.png`** — same noise, varying CFG scale from 0 to 7. At `cfg=0` the model samples from the *unconditional* distribution (all classes mixed); at `cfg=7` samples collapse hard onto the conditional mode center. The 3–7 range is where production models live.
@@ -282,7 +282,7 @@ python visualize.py --mode all --ckpt model_fm.pt   --save-prefix fm_
 python visualize.py --mode all --ckpt model_ddpm.pt --save-prefix ddpm_
 ```
 
-Compare `fm_steps.png` vs `ddpm_steps.png` side by side: flow matching converges in 4–8 steps, DDPM needs 50–100. (`trajectory.png` is FM-only since DDPM's stochastic ancestral process doesn't produce smooth trajectories.)
+Compare `fm_steps.png` vs `ddpm_steps.png` side by side: **flow matching converges in 4–8 steps; DDPM (sampled with DDIM-style sub-stepping on the same trained weights) needs 16–50 steps** to reach comparable cluster shapes. At N=4 you can see DDPM still has visible "arms" stretching from origin to clusters — the curved forward process produces a curved velocity field that few-step sampling can't track. (`trajectory.png` is FM-only since DDPM's reverse process doesn't produce smooth trajectories.)
 
 ### 4. Sample
 
