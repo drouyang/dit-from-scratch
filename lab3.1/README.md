@@ -22,13 +22,17 @@ Where `c = t_embed(t) + class_embed(y)` is the **conditioning vector** that driv
 
 **MNIST.** Same dataset as lab 1.1 (classifier) and lab 2.1 (VAE). 60k 28×28 grayscale digits, 10 classes, fits in memory, trains in minutes on a laptop. Ten classes give CFG something to do (you get 10 distinct conditional distributions instead of 8 toy Gaussians from lab 2.2). And because you've already seen MNIST through a classifier and a VAE, the only new variable is the architecture — exactly what this lab is meant to isolate.
 
-**Pixel space.** Production DiT models operate on **VAE latents** (Stable Diffusion's 8×-downsampled, 4-channel latent), not raw pixels — that's the whole point of "latent diffusion". This lab skips the VAE deliberately. Lab 3.2 plugs lab 2.1's VAE in front of this exact same DiT and trains on latents instead. Keeping pixels here means the only thing you're debugging is the transformer; the latent space comes as a *separate* concern in the next lab.
+**Pixel space.** Production DiT models operate on **VAE latents** because real images are too big to do diffusion on directly: a 256×256×3 image has 196,608 pixels, and the attention pass over a patchified version of that would dominate compute. Compressing to a `(4, 32, 32)` latent first cuts the token count ~64×.
+
+At MNIST's 28×28×1 = 784 pixels, that constraint doesn't apply — pixel-space DiT works directly. So this lab keeps things in pixel space, not as a debugging shortcut, but because *MNIST is small enough that the production motivation for using a VAE doesn't exist yet*. Lab 3.2 moves to a bigger dataset where the VAE becomes necessary, and that's where it gets introduced.
 
 ```
-this lab (3.1):    image  →                     →  DiT  →  velocity (image-shape)
-lab 3.2:           image  →  VAE.encode  →  z   →  DiT  →  velocity (z-shape)  →  VAE.decode
-                            ─────────────────       ──────────────────────────────────────
-                                lab 2.1                          this lab's DiT
+this lab (3.1):       image (1, 28, 28)   →  DiT  →  velocity (1, 28, 28)
+lab 3.2 (bigger):     image  →  VAE.encode  →  z (C, H', W')  →  DiT  →  v  →  VAE.decode
+                                ─────────────                   ─────────
+                                spatial VAE                      same DiT
+                                (drop-in: SD-VAE,                architecture
+                                 or a small custom one)           as here
 ```
 
 The DiT itself doesn't know whether its inputs are pixels or latents — it just sees a `(B, C, H, W)` tensor. That's why the architecture you write here works unchanged in lab 3.2.
