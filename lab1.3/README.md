@@ -199,7 +199,7 @@ Three tabs:
 
 **Why the parity test is the real milestone.** Attention has enough moving pieces (Q/K/V split, head reshape, scaling, softmax, output projection) that any one of them can be silently wrong and still produce plausible-looking outputs. Matching PyTorch bit-for-bit — forward *and* backward — at the same weights is the strongest possible statement that the math is right.
 
-**Why this task generalizes.** Attention is the mechanism that lets any output position gather information from any input position *based on content, not just position*. The reverse task exercises the positional half (routing based on `pos(query) + pos(key)`); content-based routing happens naturally once you stack attention on real data (lab 1.4, nanoGPT) or cross-attention on conditioning (lab 3.3, text-to-image).
+**Why this task generalizes.** Attention is the mechanism that lets any output position gather information from any input position *based on content, not just position*. The reverse task exercises the positional half (routing based on `pos(query) + pos(key)`); content-based routing happens naturally once you stack attention on real data (lab 1.4, nanoGPT) or cross-attention on conditioning (lab 3.2, text-to-image).
 
 **What changes in a real transformer block.** You add: a residual connection around attention, a LayerNorm before it (pre-norm transformers) or after it (post-norm), an MLP sublayer with its own residual and norm. Each is a small modification — none of them changes the attention kernel itself. That's why getting it right here, in isolation, pays off for every subsequent lab.
 

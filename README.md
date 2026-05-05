@@ -32,21 +32,20 @@ The training and sampling framework DiT is trained under.
 | 2.1 | VAE | [lab2.1](./lab2.1) |
 | 2.2 | Flow Matching with Conditioning | [lab2.2](./lab2.2) |
 
-## Part 3 — DiT (~12-18 hours)
+## Part 3 — DiT (~10-14 hours)
 
 Put it together.
 
 | Module | Topic | Lab |
 |---|---|---|
-| 3.1 | DiT architecture — patchify, AdaLN-Zero, RoPE-2D | [lab3.1](./lab3.1) |
-| 3.2 | Latent DiT — VAE + DiT end-to-end (class-conditional) | [lab3.2](./lab3.2) |
-| 3.3 | Text conditioning — frozen CLIP/T5 + cross-attention; end-to-end mini text-to-image | [lab3.3](./lab3.3) |
+| 3.1 | DiT architecture — patchify, AdaLN-Zero, RoPE-2D, class-conditional MNIST | [lab3.1](./lab3.1) |
+| 3.2 | Latent text-to-image DiT — wrap lab 2.1's VAE around lab 3.1's DiT, swap the class label for a CLIP/T5 text embedding (with cross-attention), train end-to-end on a small text-image dataset | [lab3.2](./lab3.2) |
 
-At this point you've built every component of a modern image DiT from scratch.
+3.1 builds and verifies the DiT architecture on raw pixels with class labels. 3.2 is the synthesis: same DiT, but operating on VAE latents and conditioned on text — the full production stack at small scale. End of the core curriculum: at this point you've built every component of a modern image DiT from scratch.
 
 ## From image to video — what changes architecturally
 
-Going from a working image DiT (lab 3.3) to a video DiT (production: WAN, LTX, HunyuanVideo) is a small dimensional extension, not a redesign. Four things change; everything else is unchanged:
+Going from a working image DiT (lab 3.2) to a video DiT (production: WAN, LTX, HunyuanVideo) is a small dimensional extension, not a redesign. Four things change; everything else is unchanged:
 
 1. The VAE becomes a **3D causal VAE** that compresses both spatial and temporal axes, producing latents of shape `(C, T, H, W)`. "Causal" in time means future frames don't leak into past frames during encoding.
 2. Patchify becomes **3D patchify** that tokenizes across time as well as space — patch shape `(p_t, p_h, p_w)` instead of `(p_h, p_w)`.
