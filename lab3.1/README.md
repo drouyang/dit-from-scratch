@@ -275,7 +275,7 @@ Modern DiT-family models (SD3, FLUX, Lumina-T2X) use **RoPE** instead, and that'
        └──────┴──────┴──────┴──────┘
 ```
 
-For 2-D RoPE, split `head_dim` in half — first half rotates by row `h`, second half by column `w`. With one frequency per axis (using `θ = π/4` for clean arithmetic; real RoPE uses much smaller values), the rotated dot product against a key at `(h_k, w_k)` becomes:
+Let `(h_q, w_q)` be Q's grid position and `(h_k, w_k)` be K's. For 2-D RoPE, split `head_dim` in half — the **first half** of the vector is rotated by an angle proportional to the **row index** (`θ·h` for Q, `θ·h_k` for K), the **second half** by the **column index** (`θ·w`, `θ·w_k`). With one frequency per axis (using `θ = π/4` for clean arithmetic; real RoPE uses much smaller values), the rotated dot product becomes:
 
 ```
 logit  ≈  cos((h_q − h_k) · π/4) · ⟨q_h, k_h⟩       (row-axis content alignment)
@@ -283,9 +283,11 @@ logit  ≈  cos((h_q − h_k) · π/4) · ⟨q_h, k_h⟩       (row-axis content
         + (smaller sin cross-terms)
 ```
 
-For Q = (2, 3) vs four candidate keys:
+Each half contributes a cosine that depends **only on the offset along its axis** — that's the magic. The row half can't see column position, the column half can't see row position, and after the dot product the absolute positions cancel out leaving only `Δh = h_q − h_k` and `Δw = w_q − w_k`.
 
-| K position | Δh | Δw | row cos | col cos |
+For Q = (2, 3) vs four candidate keys (`row cos` ≡ `cos(Δh · π/4)`, `col cos` ≡ `cos(Δw · π/4)`):
+
+| K position | Δh = h_q − h_k | Δw = w_q − w_k | row cos | col cos |
 |---|---|---|---|---|
 | **(2, 3)** — same patch | 0 | 0 | cos(0) = **1.00** | cos(0) = **1.00** |
 | **(1, 3)** — directly above | +1 | 0 | cos(π/4) ≈ 0.71 | 1.00 |
