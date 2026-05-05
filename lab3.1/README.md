@@ -39,8 +39,6 @@ The DiT itself doesn't know whether its inputs are pixels or latents — it just
 
 ## What the model learns
 
-The training data is the MNIST distribution mapped to `[-1, 1]` (so it has the same scale as the noise prior `N(0, I)`). Each image is a `(1, 28, 28)` grayscale tensor; the label is an integer in `{0, …, 9}`.
-
 The model learns a **velocity field over the space of 28×28 images**, conditioned on the class:
 
 ```
