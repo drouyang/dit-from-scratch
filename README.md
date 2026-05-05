@@ -38,7 +38,7 @@ Put it together.
 
 | Module | Topic | Lab |
 |---|---|---|
-| 3.1 | DiT architecture — patchify, AdaLN-Zero, RoPE, class conditioning | [lab3.1](./lab3.1) |
+| 3.1 | DiT architecture — patchify, AdaLN-Zero, RoPE-2D | [lab3.1](./lab3.1) |
 | 3.2 | Latent DiT — VAE + DiT end-to-end (class-conditional) | [lab3.2](./lab3.2) |
 | 3.3 | Text conditioning — frozen CLIP/T5 + cross-attention; end-to-end mini text-to-image | [lab3.3](./lab3.3) |
 

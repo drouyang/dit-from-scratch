@@ -1,8 +1,8 @@
-# Module 3.1 — DiT architecture (patchify, AdaLN-Zero, RoPE-2D, class conditioning)
+# Module 3.1 — DiT architecture (patchify, AdaLN-Zero, RoPE-2D)
 
 **Goal**: assemble the **Diffusion Transformer** — the architecture every modern image / video generator (SD3, FLUX, Lumina-T2X, WAN, LTX-Video) is built around — and train it on MNIST with the flow-matching loss from lab 2.2. By the end you have a class-conditional MNIST generator: pass in `c=7` and out comes a recognizable `7`. Lab 3.2 swaps the pixels for VAE latents; lab 3.3 swaps the class label for a text embedding. Neither lab changes the architecture you build here.
 
-**Why this matters for DiT**: this *is* DiT. After lab 1.4 you had a transformer block (LN → attn → +res, LN → MLP → +res); after lab 2.2 you had the flow-matching training loop. The four pieces this lab adds — **patchify**, **AdaLN-Zero conditioning**, **RoPE-2D**, and **class conditioning** — are exactly what turns "a transformer" into "a Diffusion Transformer". Every line that's new here is one of those four; every other line is from labs 1.4 / 2.2.
+**Why this matters for DiT**: this *is* DiT. After lab 1.4 you had a transformer block (LN → attn → +res, LN → MLP → +res); after lab 2.2 you had the flow-matching training loop *and* end-to-end class conditioning with CFG. The three pieces this lab adds — **patchify**, **AdaLN-Zero conditioning**, and **RoPE-2D** — are exactly what turns "a transformer" into "a Diffusion Transformer". Every line that's new here is one of those three; class conditioning, the time embedding, CFG, the loss, and the sampler all carry over from labs 1.4 / 2.2 unchanged.
 
 **The continuity from lab 1.4's GPT block to a DiT block** in one diff:
 
@@ -73,9 +73,9 @@ return x                                  # generated images
 
 Same sampler. The only difference from `lab2.2/flow.py` is that `x.shape` is `(N, 1, 28, 28)` instead of `(N, 2)`. That single change is reflected in `flow.py` here — `fm_euler_sample` takes a `shape` tuple instead of a scalar `dim`. The body is unchanged.
 
-## The four DiT-specific ideas
+## The three DiT-specific ideas
 
-Read `dit.py` top to bottom; it walks through these in order. The four ideas:
+Read `dit.py` top to bottom; it walks through these in order. The three ideas:
 
 ### 1. Patchify
 
@@ -99,37 +99,7 @@ Kernel size = stride = patch size means each `P × P` patch is independently lin
 
 **Unpatchify is the inverse.** After the transformer stack, the final layer projects each token back to `P × P × C` numbers, and `unpatchify` re-tiles the patches into a `(B, C, H, W)` image. The model output has the same shape as the input — exactly what flow matching's MSE expects.
 
-### 2. Class conditioning via a single vector `c`
-
-The transformer needs to know two things beyond the image: *what time* it is and *what class* to generate. DiT folds both into a single `hidden`-dim vector `c`:
-
-```python
-c = t_embed(t) + class_embed(y)    # (B, hidden)
-```
-
-- **`t_embed`** — sinusoidal time embedding (same helper as lab 2.2 / lab 1.1) followed by a 2-layer MLP. Output shape `(B, hidden)`.
-- **`class_embed`** — `nn.Embedding(num_classes + 1, hidden)`. The `+1` row is the **null class** for CFG label-dropout, exactly like lab 2.2's `TimeMLP`.
-
-That's it. The rest of the network only ever sees `c`, never the raw `t` or `y`. Treating time and class symmetrically (both → one vector) is what makes the conditioning mechanism trivial to extend in lab 3.3 — there `c = t_embed(t) + text_embed(prompt)` and the rest of the architecture is unchanged.
-
-**Label dropout for CFG** (training):
-
-```python
-if random() < label_dropout:
-    y = NULL_CLASS    # learn p(image | null) alongside p(image | y)
-```
-
-Same one-liner as lab 2.2's `train.py`. The model learns conditional and unconditional flows simultaneously, sharing all parameters.
-
-**CFG extrapolation** (sampling):
-
-```python
-v = v_uncond + cfg_scale * (v_cond - v_uncond)
-```
-
-Same line as `fm_euler_sample` in lab 2.2. Setting `cfg_scale=4.0` at inference time sharpens conditioning — samples concentrate hard on their target class. This is unchanged across labs 2.2, 3.1, 3.2, and 3.3.
-
-### 3. AdaLN-Zero — the DiT paper's main contribution
+### 2. AdaLN-Zero — the DiT paper's main contribution
 
 Lab 1.4's block was **pre-norm**:
 
@@ -144,7 +114,18 @@ x = x + gate_msa * attn(modulate(LN(x), shift_msa, scale_msa))
 x = x + gate_mlp * mlp (modulate(LN(x), shift_mlp, scale_mlp))
 ```
 
-where `(shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp)` are six per-block tensors of shape `(B, hidden)`, all produced from `c` by a single linear projection per block (`adaLN_modulation`). `modulate` does the per-feature affine:
+**Where does `c` come from?** Two components reused from lab 2.2 — sinusoidal time embedding and class embedding with a null slot for CFG — folded into one shared vector:
+
+```python
+c = t_embed(t) + class_embed(y)    # (B, hidden)
+```
+
+- **`t_embed`** — sinusoidal time embedding (same helper as lab 2.2 / lab 1.1) followed by a 2-layer MLP. Output shape `(B, hidden)`.
+- **`class_embed`** — `nn.Embedding(num_classes + 1, hidden)`. The `+1` row is the **null class** for CFG label-dropout, exactly like lab 2.2's `TimeMLP`.
+
+The DiT-specific bit is the *folding* — lab 2.2's MLP concatenated `x_emb`, `t_emb`, `c_emb` separately; DiT sums time and class into one shared `c` that then drives every block. This is what makes the conditioning trivial to extend in lab 3.3 — there `c = t_embed(t) + text_embed(prompt)` and nothing else in the architecture changes. CFG itself (label-dropout in training, `v_uncond + s·(v_cond − v_uncond)` at sampling) carries over from lab 2.2 unchanged.
+
+**The modulation parameters.** `(shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp)` are six per-block tensors of shape `(B, hidden)`, all produced from `c` by a single linear projection per block (`adaLN_modulation`). `modulate` does the per-feature affine:
 
 ```python
 def modulate(x, shift, scale):
@@ -175,7 +156,7 @@ self.adaLN_modulation = nn.Sequential(
 
 The lab 1.1 pattern (sinusoidal time → MLP) shows up here too: the conditioning vector `c` is an MLP output, and another linear inside each block decodes it into modulation parameters. Counting MLPs in DiT: one for the time embedder, one for `adaLN_modulation` per block, and the FFN inside each block. Every one of them is the pattern from lab 1.1.
 
-### 4. RoPE-2D — relative position, applied inside attention
+### 3. RoPE-2D — relative position, applied inside attention
 
 A pure attention layer is **permutation-equivariant**: shuffle the input tokens and the outputs shuffle the same way. To break that symmetry the model needs position info. Lab 1.4's GPT solved this with a learned absolute position table — `pos_embed[i]` added to the input before any attention. The original DiT paper used a fixed sin-cos 2-D position embedding the same way.
 
@@ -340,12 +321,11 @@ A few things worth checking once you've trained:
 
 ### What's new in this lab
 
-Four things, all in `dit.py`:
+Three things, all in `dit.py`:
 
 1. **Patchify**, the ViT/DiT trick that turns an image into a sequence of tokens.
-2. **A single conditioning vector `c` = t_embed + class_embed**, used to drive every LayerNorm in every block.
-3. **AdaLN-Zero**, the conditioning mechanism — replaces vanilla LN's affine with a per-`c` shift+scale, gates each sublayer's residual contribution by `c`, zero-initializes the final modulation linear so blocks start as identity.
-4. **RoPE-2D**, relative-position-info-as-rotation, applied to Q and K inside attention. Replaces lab 1.4's learned absolute position table.
+2. **AdaLN-Zero** — replaces vanilla LN's affine with a per-`c` shift+scale (where `c = t_embed(t) + class_embed(y)` folds time and class into one shared vector), gates each sublayer's residual contribution by `c`, zero-initializes the final modulation linear so blocks start as identity.
+3. **RoPE-2D**, relative-position-info-as-rotation, applied to Q and K inside attention. Replaces lab 1.4's learned absolute position table.
 
 That's the entire architectural delta from lab 1.4 to a modern image DiT. Every other line is shared — and the flow-matching training stack is shared with lab 2.2.
 
