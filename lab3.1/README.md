@@ -166,7 +166,7 @@ Kernel size = stride = patch size means each `P × P` patch is independently lin
 | Trained how? | The single linear is trained jointly with DiT; no special objective | Separately, with reconstruction loss + KL prior |
 | Purpose | **Format conversion**: image grid → sequence of tokens (so a transformer can consume it) | **Information bottleneck**: compress + regularize the space the DiT operates in |
 
-If you removed the VAE, the DiT would still patchify and unpatchify pixels directly (that's what lab 3.1 does on MNIST). If you removed patchify, the DiT couldn't run at all — its attention layers expect a sequence, not a 2D feature map.
+If you removed the VAE, the DiT would still patchify and unpatchify pixels directly. If you removed patchify, the DiT couldn't run at all — its attention layers expect a sequence, not a 2D feature map.
 
 In lab 3.2 you'll see both compositions stacked: VAE compresses image → latent, patchify reshapes latent → token sequence, transformer processes, unpatchify reshapes back, VAE decodes to image.
 
