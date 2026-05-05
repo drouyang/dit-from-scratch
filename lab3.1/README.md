@@ -275,17 +275,24 @@ Modern DiT-family models (SD3, FLUX, Lumina-T2X) use **RoPE** instead, and that'
        └──────┴──────┴──────┴──────┘
 ```
 
-Let `(h_q, w_q)` be Q's grid position and `(h_k, w_k)` be K's. For 2-D RoPE, split `head_dim` in half — the **first half** of the vector is rotated by an angle proportional to the **row index** (`θ·h` for Q, `θ·h_k` for K), the **second half** by the **column index** (`θ·w`, `θ·w_k`). With one frequency per axis (using `θ = π/4` for clean arithmetic; real RoPE uses much smaller values), the rotated dot product becomes:
+**Q and K carry two ingredients.** Each is a learned **content vector** (what the patch *is* — cat fur, wheel edge, sky) coming from `W_q`, `W_k`. RoPE then **rotates** that content vector by an angle that depends on the patch's position. So Q at position `(h_q, w_q)` is "Q's content, rotated by row `h_q` and column `w_q`."
+
+**The half-split.** For 2-D RoPE, split `head_dim` in half. The **first half** of the content vector is rotated by an angle proportional to the **row index** (`θ·h_q` for Q, `θ·h_k` for K). The **second half** by the **column index** (`θ·w_q`, `θ·w_k`). With one frequency per axis (using `θ = π/4` for clean arithmetic; real RoPE uses much smaller values), the rotated dot product expands into:
 
 ```
-logit  ≈  cos((h_q − h_k) · π/4) · ⟨q_h, k_h⟩       (row-axis content alignment)
-        + cos((w_q − w_k) · π/4) · ⟨q_w, k_w⟩       (col-axis content alignment)
+logit  ≈  cos((h_q − h_k) · π/4)  ·  ⟨q_h, k_h⟩       (row term)
+        + cos((w_q − w_k) · π/4)  ·  ⟨q_w, k_w⟩       (col term)
         + (smaller sin cross-terms)
 ```
 
-Each half contributes a cosine that depends **only on the offset along its axis** — that's the magic. The row half can't see column position, the column half can't see row position, and after the dot product the absolute positions cancel out leaving only `Δh = h_q − h_k` and `Δw = w_q − w_k`.
+Each term factors cleanly into two pieces:
 
-For Q = (2, 3) vs four candidate keys (`row cos` ≡ `cos(Δh · π/4)`, `col cos` ≡ `cos(Δw · π/4)`):
+- **Position factor**: `cos(Δh · π/4)`, `cos(Δw · π/4)` — depends *only* on the offset along that axis. Pure geometry, identical for every Q/K pair at the same offset, no learning involved.
+- **Content alignment**: `⟨q_h, k_h⟩`, `⟨q_w, k_w⟩` — the unrotated content halves dotted together. Depends *only* on what Q and K contain, not where they sit. This is what attention would compute if there were no position info at all. Learned via `W_q`, `W_k`.
+
+The position halves cancel in the dot product because RoPE rotates Q by `+h_q` and K by `+h_k`, so the rotation that survives in the cosine is the difference `h_q − h_k`. That's why each cosine sees only `Δh` or `Δw`, never absolute positions.
+
+**Position factors at Q = (2, 3) vs four candidate keys** (`row cos` ≡ `cos(Δh · π/4)`, `col cos` ≡ `cos(Δw · π/4)`):
 
 | K position | Δh = h_q − h_k | Δw = w_q − w_k | row cos | col cos |
 |---|---|---|---|---|
@@ -294,9 +301,11 @@ For Q = (2, 3) vs four candidate keys (`row cos` ≡ `cos(Δh · π/4)`, `col co
 | **(2, 2)** — directly left | 0 | +1 | 1.00 | 0.71 |
 | **(0, 0)** — far up-and-left | +2 | +3 | cos(π/2) = **0.00** | cos(3π/4) ≈ −0.71 |
 
-If Q's content vectors aligned equally with all K's, this alone would produce a cos-shaped attention peak at the same position falling off with distance — a built-in soft locality bias.
+Example: for K at (1, 3) directly above Q, `logit = 0.71·⟨q_h, k_h⟩ + 1.00·⟨q_w, k_w⟩`. If that K's content matches Q's strongly (both are cat-edge features), the inner products are large and Q attends to it. If the content doesn't match (one is cat, one is sky), the inner products are small or negative and Q ignores it — *despite* the favorable position.
 
-But the model isn't stuck with that pattern. By shaping Q and K's content vectors during training, different attention heads can learn different relative-offset preferences. Three example patterns the same RoPE-2D mechanism can express:
+**Thought experiment — what RoPE alone contributes.** Suppose for a moment that all keys had the *same* content alignment with Q (`⟨q_h, k_h⟩ = ⟨q_w, k_w⟩ = 1` everywhere). Then content can't pick winners, and the logit reduces to `row_cos + col_cos` — read straight off the table. The pattern peaks at Q's own position (2.00), gently falls off to neighbors (1.71), and goes negative far away (−0.71). That's a **cos-shaped soft locality bias** that costs zero parameters — the same inductive bias CNNs hard-code via small kernels, but emerging here from the rotation geometry alone.
+
+In real training content is *not* uniform — it does most of the work in deciding who attends to whom. The cosines just modulate it. By shaping Q and K's content vectors during training, different attention heads can override the locality default and learn different relative-offset preferences:
 
 - **Local head**: content vectors uniform → cos modulation gives a soft locality bias (attend to neighbors).
 - **Directional head**: Q/K shaped to peak at a specific `(Δh, Δw)` — e.g., "always look up-and-to-the-left."
