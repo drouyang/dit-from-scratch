@@ -1,5 +1,5 @@
-"""Visualize a trained denoiser on 8 Gaussians, plus a couple of plots that
-just show the training-data structure (no model required).
+"""Visualize a trained flow-matching denoiser on 8 Gaussians, plus two plots
+that show the training-data structure (no model required).
 
 Model-based modes (need a checkpoint):
   - samples    : scatter of generated samples colored by class
@@ -15,7 +15,7 @@ Data-only modes (no model needed):
 
 Run:
     python visualize.py --mode all
-    python visualize.py --mode steps    --ckpt model_fm.pt
+    python visualize.py --mode steps
     python visualize.py --mode crossings   # no checkpoint needed
 """
 
@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 import torch
 
 from data import NUM_CLASSES, mode_centers
-from flow import fm_euler_sample, ddpm_sample, DDPMSchedule
+from flow import fm_euler_sample
 from mlp import TimeMLP
 
 
@@ -50,21 +50,11 @@ def sample_from_ckpt(model, ckpt, n_per_class, n_steps, cfg_scale, device,
                      return_trajectory=False, classes=None):
     if classes is None:
         classes = torch.arange(NUM_CLASSES, device=device).repeat_interleave(n_per_class)
-    if ckpt["paradigm"] == "fm":
-        return fm_euler_sample(
-            model, classes.size(0), n_steps=n_steps, dim=2,
-            classes=classes, cfg_scale=cfg_scale, device=device,
-            return_trajectory=return_trajectory,
-        ), classes
-    else:
-        T = ckpt.get("ddpm_T", 100)
-        sched = DDPMSchedule(T=T).to(device)
-        x = ddpm_sample(
-            model, sched, classes.size(0), dim=2,
-            classes=classes, cfg_scale=cfg_scale, device=device,
-            n_steps=n_steps,
-        )
-        return x, classes
+    return fm_euler_sample(
+        model, classes.size(0), n_steps=n_steps, dim=2,
+        classes=classes, cfg_scale=cfg_scale, device=device,
+        return_trajectory=return_trajectory,
+    ), classes
 
 
 def _add_centers(ax, radius=5.0):
@@ -186,7 +176,7 @@ def fig_samples(model, ckpt, save, device, n_per_class=200, n_steps=50, cfg_scal
     fig, ax = plt.subplots(figsize=(6, 6))
     sc = ax.scatter(pts[:, 0], pts[:, 1], c=cls, cmap="tab10", s=8, alpha=0.6)
     _add_centers(ax)
-    ax.set_title(f"samples  ({ckpt['paradigm']}, steps={n_steps}, cfg={cfg_scale})")
+    ax.set_title(f"samples  (steps={n_steps}, cfg={cfg_scale})")
     plt.colorbar(sc, ticks=range(NUM_CLASSES), label="class")
     plt.tight_layout()
     plt.savefig(save, dpi=120, bbox_inches="tight")
@@ -196,9 +186,6 @@ def fig_samples(model, ckpt, save, device, n_per_class=200, n_steps=50, cfg_scal
 
 @torch.no_grad()
 def fig_trajectory(model, ckpt, save, device, n_traj=24, n_steps=50, cfg_scale=1.0):
-    if ckpt["paradigm"] != "fm":
-        print(f"skipping trajectory (only supported for FM, got {ckpt['paradigm']})")
-        return
     classes = torch.arange(NUM_CLASSES, device=device).repeat_interleave(n_traj // NUM_CLASSES)
     _, traj = fm_euler_sample(
         model, classes.size(0), n_steps=n_steps, dim=2,
@@ -217,7 +204,7 @@ def fig_trajectory(model, ckpt, save, device, n_traj=24, n_steps=50, cfg_scale=1
         ax.scatter(traj[-1, i, 0], traj[-1, i, 1], c=[cmap(cls[i] / NUM_CLASSES)],
                    s=20, edgecolor="black", linewidth=0.5, zorder=5)
     _add_centers(ax)
-    ax.set_title(f"trajectories  ({ckpt['paradigm']}, steps={n_steps})")
+    ax.set_title(f"trajectories  (steps={n_steps})")
     plt.tight_layout()
     plt.savefig(save, dpi=120, bbox_inches="tight")
     plt.close(fig)
@@ -227,6 +214,7 @@ def fig_trajectory(model, ckpt, save, device, n_traj=24, n_steps=50, cfg_scale=1
 @torch.no_grad()
 def fig_steps(model, ckpt, save, device, n_per_class=100, cfg_scale=1.0,
               step_grid=(1, 2, 4, 8, 16, 50)):
+    """Step-count sweep — Euler integration accepts arbitrary N."""
     fig, axes = plt.subplots(1, len(step_grid), figsize=(3 * len(step_grid), 3.5))
     for ax, n_steps in zip(axes, step_grid):
         torch.manual_seed(0)
@@ -236,7 +224,7 @@ def fig_steps(model, ckpt, save, device, n_per_class=100, cfg_scale=1.0,
         ax.scatter(pts[:, 0], pts[:, 1], c=cls, cmap="tab10", s=4, alpha=0.5)
         _add_centers(ax)
         ax.set_title(f"steps = {n_steps}")
-    fig.suptitle(f"sample quality vs step count  ({ckpt['paradigm']})")
+    fig.suptitle("sample quality vs step count")
     plt.tight_layout()
     plt.savefig(save, dpi=120, bbox_inches="tight")
     plt.close(fig)
@@ -255,7 +243,7 @@ def fig_cfg(model, ckpt, save, device, n_per_class=200, n_steps=50,
         ax.scatter(pts[:, 0], pts[:, 1], c=cls, cmap="tab10", s=4, alpha=0.5)
         _add_centers(ax)
         ax.set_title(f"cfg = {cfg_scale}")
-    fig.suptitle(f"CFG strength sweep  ({ckpt['paradigm']}, steps={n_steps})")
+    fig.suptitle(f"CFG strength sweep  (steps={n_steps})")
     plt.tight_layout()
     plt.savefig(save, dpi=120, bbox_inches="tight")
     plt.close(fig)
@@ -264,7 +252,7 @@ def fig_cfg(model, ckpt, save, device, n_per_class=200, n_steps=50,
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--ckpt",        default="model_fm.pt")
+    p.add_argument("--ckpt",        default="model.pt")
     p.add_argument("--mode",        choices=["data", "crossings", "samples", "trajectory", "steps", "cfg", "all"],
                                     default="all")
     p.add_argument("--save-prefix", default="")

@@ -1,13 +1,8 @@
-"""Train a tiny denoiser on 8 Gaussians, with optional CFG label-dropout.
-
-Default paradigm is **flow matching** (the production training objective for
-SD3, FLUX, etc.). Pass `--paradigm ddpm` to train the same MLP with
-ε-prediction on a Gaussian Markov chain instead, for direct comparison.
+"""Train a tiny flow-matching denoiser on 8 Gaussians, with optional CFG label-dropout.
 
 Run:
-    python train.py                                    # FM, with CFG
-    python train.py --paradigm ddpm                    # DDPM, with CFG
-    python train.py --label-dropout 0.0                # disable CFG dropout
+    python train.py                          # FM with CFG (default)
+    python train.py --label-dropout 0.0      # disable CFG dropout
 """
 
 import argparse
@@ -16,7 +11,7 @@ import time
 import torch
 
 from data import sample_8gaussians, NUM_CLASSES
-from flow import fm_q_sample, ddpm_q_sample, DDPMSchedule
+from flow import fm_q_sample
 from mlp import TimeMLP
 
 
@@ -30,31 +25,22 @@ def get_device():
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--paradigm",      choices=["fm", "ddpm"], default="fm")
     p.add_argument("--steps",         type=int,   default=10_000)
     p.add_argument("--batch-size",    type=int,   default=512)
     p.add_argument("--lr",            type=float, default=1e-3)
     p.add_argument("--label-dropout", type=float, default=0.1,
                    help="probability of replacing class label with the null "
                         "class during training (CFG). 0 disables CFG.")
-    p.add_argument("--ddpm-T",        type=int,   default=100,
-                   help="number of DDPM timesteps (only used if --paradigm ddpm)")
-    p.add_argument("--save-path",     default=None,
-                   help="default: vae_fm.pt or vae_ddpm.pt")
+    p.add_argument("--save-path",     default="model.pt")
     p.add_argument("--seed",          type=int,   default=0)
     args = p.parse_args()
 
-    if args.save_path is None:
-        args.save_path = f"model_{args.paradigm}.pt"
-
     torch.manual_seed(args.seed)
     device = get_device()
-    print(f"device: {device}, paradigm: {args.paradigm}")
+    print(f"device: {device}")
 
     model = TimeMLP(num_classes=NUM_CLASSES).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=args.lr)
-
-    schedule = DDPMSchedule(T=args.ddpm_T).to(device) if args.paradigm == "ddpm" else None
 
     t0 = time.time()
     for step in range(1, args.steps + 1):
@@ -65,17 +51,10 @@ def main():
             mask = torch.rand(args.batch_size, device=device) < args.label_dropout
             y = torch.where(mask, torch.full_like(y, model.null_class), y)
 
-        if args.paradigm == "fm":
-            t = torch.rand(args.batch_size, device=device)
-            x_t, _, target_v = fm_q_sample(x_0, t)
-            pred = model(x_t, t, y)
-            loss = (pred - target_v).pow(2).mean()
-        else:  # ddpm
-            t_int = torch.randint(0, schedule.T, (args.batch_size,), device=device)
-            x_t, noise = ddpm_q_sample(x_0, t_int, schedule)
-            t_norm = t_int.float() / schedule.T
-            pred = model(x_t, t_norm, y)
-            loss = (pred - noise).pow(2).mean()
+        t = torch.rand(args.batch_size, device=device)
+        x_t, _, target_v = fm_q_sample(x_0, t)
+        pred = model(x_t, t, y)
+        loss = (pred - target_v).pow(2).mean()
 
         optim.zero_grad(set_to_none=True)
         loss.backward()
@@ -88,8 +67,6 @@ def main():
     torch.save({
         "state_dict": model.state_dict(),
         "config": {"num_classes": NUM_CLASSES},
-        "paradigm": args.paradigm,
-        "ddpm_T": args.ddpm_T if args.paradigm == "ddpm" else None,
     }, args.save_path)
     print(f"saved {args.save_path}")
 

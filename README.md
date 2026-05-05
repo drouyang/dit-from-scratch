@@ -30,7 +30,7 @@ The training and sampling framework DiT is trained under.
 | Module | Topic | Lab |
 |---|---|---|
 | 2.1 | VAE — the latent space DiT operates in | [lab2.1](./lab2.1) |
-| 2.2 | Flow Matching with CFG | [lab2.2](./lab2.2) |
+| 2.2 | Flow Matching with conditioning | [lab2.2](./lab2.2) |
 
 ## Part 3 — DiT
 

@@ -1,10 +1,10 @@
-# Module 2.2 — Flow Matching with CFG
+# Module 2.2 — Flow Matching with Conditioning
 
 > Part 2 — Diffusion Essentials · [DiT from Scratch](../README.md)
 
-**Goal**: train a small denoiser on a 2-D toy distribution using **flow matching** (the production-grade training paradigm used by SD3, FLUX, Lumina-T2X, etc.) with **classifier-free guidance (CFG)**. Visualize how the model flows points from noise to data, how few sampling steps it actually needs, and how CFG controls conditioning strength. A brief comparison with DDPM (the historical paradigm) shows what flow matching replaced and why.
+**Goal**: train a small denoiser on a 2-D toy distribution using **flow matching** — the production-grade training paradigm used by SD3, FLUX, Lumina-T2X, WAN, LTX, etc. — with **class conditioning** as the simplest stand-in for text conditioning. Visualize how the model flows points from noise to data, how few sampling steps it actually needs, and how **classifier-free guidance (CFG)** controls conditioning strength at sampling time.
 
-**Why this matters for DiT**: this lab is the *training paradigm* DiT will use end-to-end. The MLP here gets swapped for a DiT in lab 3.2, and the 2-D points get swapped for image latents — but the loss, the sampler, and the CFG mechanism stay exactly the same. Lab 3.2 reuses this training loop verbatim with a DiT + VAE plugged in.
+**Why this matters for DiT**: this lab is the *training paradigm* DiT will use end-to-end. The MLP here gets swapped for a DiT in lab 3.2, and the 2-D points get swapped for image latents — but the loss, the sampler, and the conditioning mechanism stay exactly the same. Lab 3.2 reuses this training loop verbatim with a DiT + VAE plugged in.
 
 ## Background: text embeddings
 
@@ -46,7 +46,7 @@ The DiT learns to *use* the encoder's outputs but never updates the encoder. Tex
 
 ## Why a 2-D toy
 
-Production diffusion models all operate on tensors with thousands or millions of dimensions, but every paper still falls back to a 2-D toy at some point — because at 2-D you can **see the entire latent space** as a scatter plot. You can watch points flow from `N(0, I)` to the data distribution. You can see CFG concentrate samples toward their target mode. You can verify that flow matching converges in 2 steps where DDPM needs 100. None of that is visible at higher dimensions.
+Production diffusion models all operate on tensors with thousands or millions of dimensions, but every paper still falls back to a 2-D toy at some point — because at 2-D you can **see the entire latent space** as a scatter plot. You can watch points flow from `N(0, I)` to the data distribution. You can see CFG concentrate samples toward their target mode. You can verify that flow matching converges in just a few Euler steps. None of that is visible at higher dimensions.
 
 **This 8-class label is the toy stand-in for a text prompt in production.** SD3, FLUX, WAN, LTX all condition on text — "a cat on a chair" or "a video of a sunset" — embedded by a text encoder (CLIP, T5) and fed into the model. We use a single integer here for the same reason every diffusion paper does: it's the simplest possible conditioning signal, which lets you study the conditioning mechanism in isolation. Lab 3.3 swaps `c` for a real text embedding; the mechanism is identical.
 
@@ -100,43 +100,23 @@ When `t` reaches 0, `x` lands inside the cluster for class `c` — you've traver
 
 ## The forward process
 
-The first thing every diffusion / flow-matching method needs is a **forward process** — a way to gradually destroy data with noise. Flow matching's choice is dramatically simpler than DDPM's:
-
-### Flow Matching — straight line
+Flow matching's forward process — the way data is gradually destroyed with noise — is a single straight-line interpolation:
 
 ```
 x_t  =  (1 - t) · x_0  +  t · noise,    noise ~ N(0, I),    t ∈ [0, 1]
 ```
 
-At `t=0`, `x_t = x_0` (the data). At `t=1`, `x_t = noise`. In between, you walk linearly in a straight line. That's it. One formula, no schedule.
+At `t=0`, `x_t = x_0` (the data). At `t=1`, `x_t = noise`. In between, you walk linearly in a straight line. One formula, no schedule.
 
 The **velocity field** along this path is `v = noise - x_0` — it's *constant* along the entire path because the path is straight. (This is what "rectified flow" means: the flow is a rectified, i.e. straight, line.)
 
-### DDPM — Gaussian Markov chain
+## Training: predict the velocity
 
-For comparison, here's the same idea in DDPM's formulation:
+Train an MLP that takes `(x_t, t, class)` and outputs a 2-D vector. The supervision target is the velocity `v = noise - x_0`; the loss is plain MSE:
 
+```python
+loss  =  MSE( model(x_t, t, c) , noise - x_0 )
 ```
-β = linspace(1e-4, 0.02, T)              # T = 100, "noise schedule"
-α_t = 1 - β_t,    ᾱ_t = ∏ α_s   for s ≤ t
-
-x_t  =  √ᾱ_t · x_0  +  √(1 - ᾱ_t) · noise
-```
-
-Same shape as the flow-matching formula (a convex combination of data and noise) but with *coefficients chosen by a noise schedule* rather than just `(1-t, t)`. The math falls out of a Gaussian Markov chain `q(x_t | x_{t-1})`; the closed-form skip-to-`x_t` formula is derivable from that chain.
-
-Both work. Flow matching is preferred because it has fewer moving parts, no schedule to tune, and the straight-line path makes few-step sampling effective.
-
-## Training: predict the velocity (or the noise)
-
-Train an MLP that takes `(x_t, t, class)` and outputs a 2-D vector. The supervision signal is what changes between paradigms:
-
-| Paradigm | Target | Loss |
-| --- | --- | --- |
-| **Flow Matching** | velocity `v = noise - x_0` | `MSE(model(x_t, t, c), v)` |
-| **DDPM** | noise `ε` | `MSE(model(x_t, t, c), ε)` |
-
-That's the only training-time difference. Same architecture, same optimizer, same number of steps. (Flow matching loss is roughly twice as large in magnitude because `v = noise - x_0` is bigger than `ε`, but the optimization is equally easy.)
 
 The training loop is ~30 lines (`train.py`):
 
@@ -173,8 +153,6 @@ return x
 ```
 
 That's the entire sampler. (See `steps.png` from the visualize step for how few steps actually suffice in practice.)
-
-DDPM's sampler is more elaborate (`ddpm_sample` in `flow.py`): T ancestral steps with the posterior mean and variance, including the explicit `(1 - α)/√(1 - ᾱ) · ε` denoising correction and stochastic noise injection at each step. To compare DDPM at variable step counts (since pure ancestral sampling is fixed at T), `ddpm_sample` also supports **DDIM-style deterministic sub-stepping** (Song et al. 2020) — same trained weights, but pick `N` timesteps from the schedule and apply a deterministic update between consecutive ones. On this toy, the DDPM-trained model with DDIM sampling needs ~16–50 steps to converge while flow matching needs ~4–8 — *the same model class* with a curved forward process is fundamentally less step-efficient than flow matching's straight-line one.
 
 ## Classifier-Free Guidance (CFG)
 
@@ -218,9 +196,9 @@ See `cfg.png` for the visualization. Production text-to-image models typically u
 | --- | --- |
 | `data.py` | 8-Gaussians sampler |
 | `mlp.py` | tiny MLP with sinusoidal time embedding + class embedding (with a null slot for CFG) |
-| `flow.py` | `fm_q_sample` + `fm_euler_sample` (flow matching), `ddpm_q_sample` + `ddpm_sample` + `DDPMSchedule` (DDPM comparison; `ddpm_sample` does ancestral sampling at full T, or DDIM-style sub-stepping when `n_steps < T`) |
-| `train.py` | training loop, `--paradigm fm\|ddpm`, `--label-dropout` for CFG |
-| `sample.py` | sampling CLI; auto-picks Euler / ancestral based on the checkpoint's saved paradigm |
+| `flow.py` | `fm_q_sample` (forward process) + `fm_euler_sample` (Euler ODE sampler) |
+| `train.py` | training loop, `--label-dropout` for CFG |
+| `sample.py` | sampling CLI; calls `fm_euler_sample` |
 | `visualize.py` | four figures: `samples`, `trajectory`, `steps`, `cfg` |
 
 ## Instructions
@@ -242,15 +220,7 @@ Default: flow matching with CFG label-dropout = 0.1.
 python train.py
 ```
 
-10,000 steps in ~30 seconds on M3 MPS. Saves `model_fm.pt`.
-
-To train the DDPM comparison model with the same architecture:
-
-```bash
-python train.py --paradigm ddpm
-```
-
-Saves `model_ddpm.pt`.
+10,000 steps in ~30 seconds on M3 MPS. Saves `model.pt`.
 
 ### 3. Visualize
 
@@ -270,35 +240,24 @@ Produces four figures:
 
   1. **Dots scattered into the cluster shape = good.** The training data itself is a cluster with std=0.3, so a working model should *also* produce a cluster with std=0.3. Dots collapsing to a single point (no spread) means the model captured the *mean* but not the *variance* — every random seed would produce the same output, no diversity. Dots spread far beyond the cluster's true std means the model is over-diverse, generating samples the training data doesn't actually contain. Matching the training cluster's spread is the goal.
 
-  2. **Fewer steps to reach that scattered shape = better.** Each Euler step is one model evaluation. FM's straight-line paths converge in 4–8 steps for this toy (4–10× faster than the DDPM-trained model with DDIM sub-stepping, which needs 16–50). At production scale this is the difference between "10–20s per image" and "~2s per image" — and what makes real-time video generation (LTX-style) feasible at all. So you're not just looking for "the model works" but "the model works *with as few steps as possible*."
+  2. **Fewer steps to reach that scattered shape = better.** Each Euler step is one model evaluation. FM's straight-line paths converge in 4–8 steps for this toy. At production scale this is the difference between "tens of model evaluations per image" and "a handful" — and what makes real-time video generation (LTX-style) feasible at all. So you're not just looking for "the model works" but "the model works *with as few steps as possible*."
 
   **Why N=1 collapses to cluster centers:** at the start (`t=1`), the model has no way to tell which *specific* point inside the cluster a given noise vector should head to — it only knows the class. So its prediction is "everyone aim for the cluster mean." With one giant Euler step at full speed in that direction, every starting noise lands exactly at the mean. **Why N=8 recovers the spread:** the model's velocity field has *position-dependent* corrections at intermediate `t` values. Multiple small steps sample those corrections, so different starting positions accumulate different deviations and end up at different points around the cluster — preserving the starting noise's variance as the data's variance.
 - **`cfg.png`** — same noise, varying CFG scale from 0 to 7. At `cfg=0` the model samples from the *unconditional* distribution (all classes mixed); at `cfg=7` samples collapse hard onto the conditional mode center. The 3–7 range is where production models live.
 
-To compare flow matching against DDPM directly:
-
-```bash
-python visualize.py --mode all --ckpt model_fm.pt   --save-prefix fm_
-python visualize.py --mode all --ckpt model_ddpm.pt --save-prefix ddpm_
-```
-
-Compare `fm_steps.png` vs `ddpm_steps.png` side by side: **flow matching converges in 4–8 steps; DDPM (sampled with DDIM-style sub-stepping on the same trained weights) needs 16–50 steps** to reach comparable cluster shapes. At N=4 you can see DDPM still has visible "arms" stretching from origin to clusters — the curved forward process produces a curved velocity field that few-step sampling can't track. (`trajectory.png` is FM-only since DDPM's reverse process doesn't produce smooth trajectories.)
-
 ## Discussion
 
-**Why production picked flow matching.**
+**Why this is the production training paradigm.**
 
-1. **Simpler math.** No `β` schedule, no `α_bar` accumulations, no posterior variances. One straight-line forward process, one ODE sampler, done. Reading SD3 / FLUX / Lumina papers no longer requires re-deriving DDPM's reverse process from scratch.
-2. **Few-step sampling.** Because the path is straight, even Euler integration converges in very few steps. DDPM needs the hundreds of steps because its forward process is curved and the reverse process has to follow that curvature.
-3. **Better few-step quality.** When you do go to few steps (production needs fast inference), flow matching's predictions are simply more useful — the velocity field is smoother and the path is shorter.
+1. **Simple math.** One straight-line forward process, one ODE sampler. No noise schedule to tune, no posterior variances, no Markov-chain bookkeeping. Reading SD3 / FLUX / Lumina / WAN / LTX papers comes down to "the same recipe you have here, scaled up."
+2. **Few-step sampling.** Because the path is straight, even plain Euler integration converges in very few steps. Real-time video generation (LTX-style) is feasible specifically because the integrator can stop after 4–8 evaluations with usable output.
+3. **Architecture-independent.** The forward process, training target, sampler, and CFG mechanism are all defined over the *velocity field* — they don't care whether the network is an MLP, a UNet, or a DiT. Lab 3.2 swaps the MLP for a DiT and everything else carries over unchanged.
 
-**What's identical across the two paradigms.**
+**What carries through to lab 3.2 (Latent DiT).**
 
-- Network architecture, input format `(x, t, c)`, time embedding, class embedding.
-- Training loop shape: sample `t`, compute closed-form `x_t`, predict the target, MSE loss.
-- CFG: works *identically* with both. Train with label dropout, sample with extrapolation. The mechanism is paradigm-agnostic.
-- Variance preserved: both forward processes interpolate between data (variance 1, in this toy) and noise (variance 1).
+- Network input format `(x, t, c)`, time embedding, class/text embedding.
+- Training loop shape: sample `t`, compute closed-form `x_t`, predict the velocity, MSE loss.
+- CFG: identical mechanism (label dropout during training, extrapolation at sampling).
+- The Euler sampler. (Production may swap in higher-order ODE solvers — Heun, RK4 — for slightly faster sampling, but the integration target is the same.)
 
-**Brief note on DDPM's place in the curriculum.**
-
-DDPM is the historical foundation — every flow-matching paper still motivates against it. Knowing the contrast (Markov chain vs straight line, ε-prediction vs velocity, ancestral sampling vs ODE integration) is enough to read modern papers. Implementing the full DDPM machinery beyond what this lab does (cosine schedules, v-parameterization, posterior variance learning, DDIM derivation, classifier guidance) is academic at this point — production has moved on.
+What changes in lab 3.2: the MLP becomes a DiT, the 2-D point becomes an image latent, and the class label becomes a text embedding. The loss, the sampler, and the CFG mechanism are exactly what you build here.

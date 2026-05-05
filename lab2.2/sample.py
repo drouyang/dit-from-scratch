@@ -1,10 +1,8 @@
-"""Sample from a trained model. Picks the right sampler based on the
-checkpoint's saved paradigm (flow matching → Euler ODE; DDPM → ancestral).
+"""Sample from a trained flow-matching model.
 
 Run:
     python sample.py                                    # 8 samples per class
-    python sample.py --ckpt model_ddpm.pt
-    python sample.py --cfg-scale 3.0  --steps 10
+    python sample.py --cfg-scale 3.0  --steps 10        # production-like settings
     python sample.py --class-id 3 --n-per-class 32
 """
 
@@ -13,7 +11,7 @@ import argparse
 import torch
 
 from data import NUM_CLASSES
-from flow import fm_euler_sample, ddpm_sample, DDPMSchedule
+from flow import fm_euler_sample
 from mlp import TimeMLP
 
 
@@ -27,7 +25,7 @@ def get_device():
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--ckpt",         default="model_fm.pt")
+    p.add_argument("--ckpt",         default="model.pt")
     p.add_argument("--steps",        type=int,   default=50)
     p.add_argument("--cfg-scale",    type=float, default=1.0,
                    help="1.0 = no CFG; > 1.0 = stronger conditioning")
@@ -49,21 +47,12 @@ def main():
     else:
         classes = torch.arange(NUM_CLASSES, device=device).repeat_interleave(args.n_per_class)
 
-    paradigm = ckpt["paradigm"]
-    if paradigm == "fm":
-        x = fm_euler_sample(
-            model, classes.size(0), n_steps=args.steps, dim=2,
-            classes=classes, cfg_scale=args.cfg_scale, device=device,
-        )
-    else:
-        T = ckpt.get("ddpm_T", 100)
-        sched = DDPMSchedule(T=T).to(device)
-        x = ddpm_sample(
-            model, sched, classes.size(0), dim=2,
-            classes=classes, cfg_scale=args.cfg_scale, device=device,
-        )
+    x = fm_euler_sample(
+        model, classes.size(0), n_steps=args.steps, dim=2,
+        classes=classes, cfg_scale=args.cfg_scale, device=device,
+    )
 
-    print(f"paradigm={paradigm}  steps={args.steps}  cfg={args.cfg_scale}")
+    print(f"steps={args.steps}  cfg={args.cfg_scale}")
     print("class | (x, y)")
     for c, p in zip(classes.cpu().tolist(), x.cpu().tolist()):
         print(f"  {c}   | ({p[0]:+.3f}, {p[1]:+.3f})")
