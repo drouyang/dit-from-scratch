@@ -325,15 +325,7 @@ These are all *learnable* in the same model. Production DiTs end up with heads s
 - **Position-biased**: "match patches that are one step above me" — content shaped to peak when `Δh = +1, Δw = 0`.
 - **Locality**: "trust my neighbors" — content roughly uniform, the bare RoPE cosine carries the day.
 
-So:
-
-> *different heads learn different features* (general fact)
-> +
-> *features can include spatial patterns because position is in the geometry* (RoPE's contribution)
-> =
-> heads naturally specialize into different relative-offset preferences with no extra parameters or supervision.
-
-The DiT gets this for free.
+So different heads learn different features (general fact), and features can include spatial patterns because position is in the geometry (RoPE's contribution) — together, heads naturally specialize into different relative-offset preferences with no extra parameters or supervision. The DiT gets this for free.
 
 ## Putting it together
 
