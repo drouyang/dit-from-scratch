@@ -150,7 +150,7 @@ for step in range(N):
     loss.backward(); optim.step()
 ```
 
-## Sampling: integrate the ODE
+## Sampling: integrate the ODE (ordinary differential equation)
 
 Once the model has learned the velocity field, **sampling is just integrating an ODE** from `t=1` (noise) backward to `t=0` (data):
 
@@ -172,7 +172,7 @@ for i in range(n_steps):
 return x
 ```
 
-That's the entire sampler. **N=4 steps already produces well-shaped samples** for this toy (see `steps.png`). At N=1 you get the right cluster centers but no spread; by N=8 the output is essentially identical to N=50.
+That's the entire sampler. (See `steps.png` from the visualize step for how few steps actually suffice in practice.)
 
 DDPM's sampler is more elaborate (`ddpm_sample` in `flow.py`): T ancestral steps with the posterior mean and variance, including the explicit `(1 - α)/√(1 - ᾱ) · ε` denoising correction and stochastic noise injection at each step. On this toy DDPM needs ~50–100 steps for similar quality — *the same model* sampled with a worse algorithm.
 
@@ -262,7 +262,7 @@ Produces four figures:
 
 - **`samples.png`** — 200 samples per class, scattered, colored by class. Mode centers (`★`) overlaid for reference. Should produce eight tight clusters at the eight `★`s.
 - **`trajectory.png`** — straight-line paths from noise to data for a few sample points. You can see flow matching produces *literal straight lines* — that's what "rectified" means.
-- **`steps.png`** — the headline result. Same noise, same model, varying step count from 1 to 50. By step 4 the clusters have the right shape; step 8 is indistinguishable from step 50. Few-step sampling is what flow matching unlocks.
+- **`steps.png`** — the headline result. Same noise, same model, varying step count from 1 to 50. **N=4 steps already produces well-shaped samples** for this toy. At N=1 you get the right cluster centers but no spread; by N=8 the output is essentially identical to N=50. Few-step sampling is what flow matching unlocks.
 - **`cfg.png`** — same noise, varying CFG scale from 0 to 7. At `cfg=0` the model samples from the *unconditional* distribution (all classes mixed); at `cfg=7` samples collapse hard onto the conditional mode center. The 3–7 range is where production models live.
 
 To compare flow matching against DDPM directly:
