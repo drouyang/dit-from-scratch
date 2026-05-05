@@ -34,7 +34,7 @@ x ─┬─► LN ─► mod(s_a,sc_a) ─► MHA+RoPE ─► × g_a ─┐ ┌�
    └───────────────────────────────────────────►⊕─┴──────────────────────────────────────►⊕─► out
         ▲                                          ▲
         │                                          │
-        └─── (s_a, sc_a, g_a, s_m, sc_m, g_m) = adaLN_modulation(c) ─── c = t_embed(t) + class_embed(y)
+        └─── (s_a, sc_a, g_a, s_m, sc_m, g_m) = adaLN_modulation(c)
 ```
 
 Same backbone (pre-norm + residual around two sublayers), three new things:
