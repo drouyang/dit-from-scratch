@@ -38,10 +38,10 @@ Put it together.
 
 | Module | Topic | Lab |
 |---|---|---|
-| 3.1 | DiT architecture — patchify, AdaLN-Zero, RoPE-2D, class-conditional MNIST | [lab3.1](./lab3.1) |
-| 3.2 | Latent text-to-image DiT — wrap lab 2.1's VAE around lab 3.1's DiT, swap the class label for a CLIP/T5 text embedding (with cross-attention), train end-to-end on a small text-image dataset | [lab3.2](./lab3.2) |
+| 3.1 | DiT architecture — patchify, AdaLN-Zero, RoPE-2D | [lab3.1](./lab3.1) |
+| 3.2 | Latent text-to-image DiT — VAE , text embedding with cross-attention | [lab3.2](./lab3.2) |
 
-3.1 builds and verifies the DiT architecture on raw pixels with class labels. 3.2 is the synthesis: same DiT, but operating on VAE latents and conditioned on text — the full production stack at small scale. End of the core curriculum: at this point you've built every component of a modern image DiT from scratch.
+3.1 builds and verifies the DiT architecture on raw pixels with class labels. 3.2 is the synthesis: same DiT, but operating on VAE latents and conditioned on text — the full production stack at small scale. At this point you've built every component of a modern image DiT from scratch.
 
 ## From image to video — what changes architecturally
 
