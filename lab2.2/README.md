@@ -284,14 +284,6 @@ python visualize.py --mode all --ckpt model_ddpm.pt --save-prefix ddpm_
 
 Compare `fm_steps.png` vs `ddpm_steps.png` side by side: **flow matching converges in 4–8 steps; DDPM (sampled with DDIM-style sub-stepping on the same trained weights) needs 16–50 steps** to reach comparable cluster shapes. At N=4 you can see DDPM still has visible "arms" stretching from origin to clusters — the curved forward process produces a curved velocity field that few-step sampling can't track. (`trajectory.png` is FM-only since DDPM's reverse process doesn't produce smooth trajectories.)
 
-### 4. Sample
-
-```bash
-python sample.py                              # 8 samples per class, default cfg=1
-python sample.py --cfg-scale 3.0  --steps 10  # production-like settings
-python sample.py --class-id 3 --n-per-class 32
-```
-
 ## Discussion
 
 **Why production picked flow matching.**
@@ -306,19 +298,6 @@ python sample.py --class-id 3 --n-per-class 32
 - Training loop shape: sample `t`, compute closed-form `x_t`, predict the target, MSE loss.
 - CFG: works *identically* with both. Train with label dropout, sample with extrapolation. The mechanism is paradigm-agnostic.
 - Variance preserved: both forward processes interpolate between data (variance 1, in this toy) and noise (variance 1).
-
-**What changes for DiT (lab 3.2).**
-
-| Property | This lab | Lab 3.2 (Latent DiT) |
-|---|---|---|
-| Model | tiny MLP, 2-D in / 2-D out | DiT (transformer with patchify) |
-| Data | 2-D point cloud, 8 Gaussians | 32×32×4 latents from VAE encoder |
-| Conditioning | class label in {0, ..., 7} | class label or text embedding |
-| Training paradigm | flow matching | flow matching (same loss) |
-| CFG | identical | identical |
-| Sampler | Euler ODE | Euler ODE (or higher-order solver) |
-
-Five of seven rows are identical. The training loss, the sampler, and CFG carry over unchanged. *That's why this lab uses an MLP with no apologies* — the pieces being demonstrated are paradigm-level, not architecture-level. Lab 3.1 introduces DiT properly; lab 3.2 swaps it in.
 
 **Brief note on DDPM's place in the curriculum.**
 
