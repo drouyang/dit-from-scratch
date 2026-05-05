@@ -2,14 +2,14 @@
 
 A hands-on path to understanding Diffusion Transformers. Build each prerequisite, then assemble a working latent-space DiT for text-to-image. Part 4 takes you from "I built a tiny one" to "I can read, run, fine-tune, and deploy a real production WAN video model".
 
-- **Time**: 3-6 hours per module (Part 4 is heavier and partly cloud-based)
 - **Stack**: PyTorch + MacBook Pro M3 (Parts 1–3); Part 4 adds rented GPU compute
+- **Time**: see each Part heading below for total hours
 
 Each module has its own lab directory with detailed instructions (e.g. `lab1.1/` for Module 1.1).
 
 ---
 
-## Part 1 — Building Blocks
+## Part 1 — Building Blocks (~15-25 hours)
 
 The primitives DiT is made of.
 
@@ -23,7 +23,7 @@ The primitives DiT is made of.
 
 ★ = the architectural backbone of every modern transformer — DiT, GPT, LLaMA, ViT, BERT all build on these two.
 
-## Part 2 — Diffusion Essentials
+## Part 2 — Diffusion Essentials (~6-10 hours)
 
 The training and sampling framework DiT is trained under.
 
@@ -32,7 +32,7 @@ The training and sampling framework DiT is trained under.
 | 2.1 | VAE | [lab2.1](./lab2.1) |
 | 2.2 | Flow Matching with Conditioning | [lab2.2](./lab2.2) |
 
-## Part 3 — DiT
+## Part 3 — DiT (~12-18 hours)
 
 Put it together.
 
@@ -55,7 +55,7 @@ Going from a working image DiT (lab 3.3) to a video DiT (production: WAN, LTX, H
 
 DiT block structure, AdaLN-Zero, flow matching loss, CFG, text conditioning — all carry over unchanged.
 
-## Part 4 — DiT in Production
+## Part 4 — DiT in Production (~10-15 hours)
 
 A deliberate shape change: the labs above are *build from scratch*; these are *read, run, and modify a real production codebase*. The target is [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) — a state-of-the-art open text-to-video / image-to-video DiT family. After Parts 1–3 you can open WAN's source and recognize every block; this part makes you fluent in working with it, including the 3D-VAE / 3D-patchify / 3D-RoPE extensions described above.
 
