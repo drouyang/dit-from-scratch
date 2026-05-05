@@ -264,24 +264,23 @@ def main():
     torch.manual_seed(args.seed)
     pfx = args.save_prefix
 
-    # Model-independent plots go in img/ — they're embedded in the README.
-    # Skip when a save-prefix is set (those are for per-model PNG outputs).
+    # `data` and `crossings` are the model-independent figures embedded in
+    # the README. They live in img/ as SVGs and only need to be regenerated
+    # when the data sampler or trajectory visualization changes — so they're
+    # opt-in via --mode data / --mode crossings, NOT included in --mode all.
     img_dir = Path("img")
-    if not pfx:
-        img_dir.mkdir(exist_ok=True)
     if args.mode == "data":
+        img_dir.mkdir(exist_ok=True)
         fig_data(save=str(img_dir / "data_distribution.svg"))
         return
     if args.mode == "crossings":
+        img_dir.mkdir(exist_ok=True)
         fig_crossings(save=str(img_dir / "trajectory_crossings.svg"))
         return
 
     device = get_device()
     model, ckpt = load_model(args.ckpt, device)
 
-    if args.mode == "all" and not pfx:
-        fig_data(save=str(img_dir / "data_distribution.svg"))
-        fig_crossings(save=str(img_dir / "trajectory_crossings.svg"))
     if args.mode in ("samples", "all"):
         fig_samples(model, ckpt, save=f"{pfx}samples.png", device=device,
                     n_steps=args.steps, cfg_scale=args.cfg_scale)
