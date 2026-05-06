@@ -22,7 +22,7 @@ Read these first if you don't already have a working model of multi-GPU parallel
 4. **Selective activation checkpointing** — fits between (1) and (5); needed for any model >7 B.
 5. **Distributed checkpointing** — boring but non-skippable at 14 B+ params.
 
-Skip the inference acceleration sections below until you're solid on the parallelism layer above — TeaCache / KV-caching / quantization are optimizations on top of a working training stack, not the stack itself.
+Skip the inference acceleration sections below until you're solid on the parallelism layer above — TeaCache / KV-caching are optimizations on top of a working training stack, not the stack itself.
 
 ### Sharding & parallelism
 
@@ -39,7 +39,6 @@ Skip the inference acceleration sections below until you're solid on the paralle
 
 ### Mixed precision
 
-- **[NVIDIA Transformer Engine](https://github.com/NVIDIA/TransformerEngine)** — fp8 training/inference primitives for Hopper/Blackwell. Hybrid bf16-fp8 paths (matmuls in fp8, accumulators / norms / softmax in bf16) — what production teams are starting to deploy in 2025–26.
 - **[`torch.amp` / autocast docs](https://pytorch.org/docs/stable/amp.html)** — bf16 autocast caveats. The non-obvious ops that need fp32 (reductions, AdaLN's affine, MSE accumulation) are listed here.
 - **[Mixed Precision Training (Micikevicius et al. 2017)](https://arxiv.org/abs/1710.03740)** — original mixed-precision paper. fp16 era, but the loss-scaling and master-weights mental models still apply when you debug bf16 instabilities.
 
@@ -58,7 +57,7 @@ Skip the inference acceleration sections below until you're solid on the paralle
 
 ## Inference acceleration
 
-The runtime layer is GPU-engineer territory: compilation, caching infrastructure, quantization runtime, multi-GPU inference. The *algorithmic* layer (deciding which features to cache across steps, recipe-level scheduler choices) is ML-engineering work — you cooperate with it but you don't own the recipe. Subsections below are split accordingly; spend the bulk of your time on the first half.
+The runtime layer is GPU-engineer territory: compilation, caching infrastructure, multi-GPU inference. The *algorithmic* layer (deciding which features to cache across steps, recipe-level scheduler choices) is ML-engineering work — you cooperate with it but you don't own the recipe. Subsections below are split accordingly; spend the bulk of your time on the first half.
 
 ### Runtime — what GPU eng owns
 
@@ -70,14 +69,6 @@ The runtime layer is GPU-engineer territory: compilation, caching infrastructure
 #### Cross-attention KV caching
 
 - **Cross-attention KV caching** — diffusion has no causal KV cache (non-autoregressive), but the *cross-attention* keys/values from text tokens don't change across sampling steps. Cache them once. Most production pipelines do this; the diffusers source (`WanPipeline.__call__`) is the reference implementation. Pure runtime change — no model modification, no ML-side decision.
-
-#### Quantization runtime
-
-- **[`bitsandbytes`](https://github.com/bitsandbytes-foundation/bitsandbytes)** — NF4 / int8 / fp4. The HF/diffusers default. CUDA-only.
-- **[`torchao`](https://github.com/pytorch/ao)** — Meta's modern alternative. Better `torch.compile` interop, native PyTorch (no separate ext). int8, fp8, and weight-only paths.
-- **[SmoothQuant (Xiao et al. 2022)](https://arxiv.org/abs/2211.10438)** — activation-aware W8A8. The technique most production int8 deployments use; key insight is that activation outliers concentrate in a few channels and you can pre-shift them into the weights.
-- **[AWQ (Lin et al. 2023)](https://arxiv.org/abs/2306.00978)** — activation-aware W4A16. The 4-bit-weight equivalent of SmoothQuant; what most LLM W4A16 deployments use. Less battle-tested for diffusion/video but the math is general.
-- **[LLM.int8() (Dettmers et al. 2022)](https://arxiv.org/abs/2208.07339)** — the original "8-bit inference for transformers" paper. Read for the outlier-feature mental model that informs SmoothQuant / AWQ.
 
 #### Multi-GPU inference
 
@@ -113,3 +104,4 @@ Reading actual production code is often higher-leverage than papers for an HPC e
 - Autograd / lower-level kernel writing (Triton, CUTLASS) — important if you write kernels, but the curriculum's audience is one level up.
 - Backend / API serving (Triton Inference Server, vLLM, Modal, Replicate). Per request — explicitly out of scope.
 - Image-only diffusion optimizations (no T axis) — most carry over to video, but you'd find them via the video sources anyway.
+- **Quality/precision-trading optimizations** — inference quantization (bitsandbytes / torchao / SmoothQuant / AWQ), quantized attention (SageAttention), sparse attention (VSA), fp8 training (Transformer Engine). These trade quality for performance, and the tradeoff often regresses in production. Treated as last-resort knobs, out of scope here.
