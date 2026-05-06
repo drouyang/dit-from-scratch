@@ -1,0 +1,10 @@
+torch>=2.1
+torchvision>=0.16
+numpy<2.4
+gradio>=4.0
+
+# Pretrained models (same as parent lab3.2/requirements.txt)
+diffusers>=0.27
+transformers>=4.40
+accelerate>=0.27
+safetensors>=0.4

@@ -82,6 +82,7 @@ The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct na
 | `flow.py` | Flow matching `fm_q_sample` and `fm_euler_sample`, signature adapted for text inputs. |
 | `train.py` | Training loop. Encodes images via VAE and captions via CLIP at each step (pretrained, no_grad), trains DiT on the velocity-prediction objective. |
 | `sample.py` | Text → image CLI. Loads everything, runs Euler ODE in latent space, decodes through VAE. Supports `--prompts` for grid generation. |
+| `demo/app.py` | Gradio webapp — type a prompt, drag CFG / steps / seed, see a live gallery of generations. |
 
 ## Setup
 
