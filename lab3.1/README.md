@@ -30,9 +30,9 @@ x = x + gate_msa * attn(AdaLN(x, c))
 x = x + gate_mlp * mlp (AdaLN(x, c))
 ```
 
-Two things change visually: `LayerNorm(x)` becomes `AdaLN(x, c)` (now conditioned on `c`), and each residual gets a `gate_* *` prefix.
+Two things change visually: `LayerNorm(x)` becomes `AdaLN(x, c)` (now conditioned on `c`), and each residual gets a `gate` prefix.
 
-`AdaLN(x, c)` and the gates aren't literal Python objects — they're shorthand for the same predict-then-apply pattern unfolded:
+`AdaLN(x, c)` unfolded:
 
 ```python
 shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = adaLN_modulation(c).chunk(6, dim=-1)   # predict
