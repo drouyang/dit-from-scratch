@@ -45,15 +45,13 @@ Put it together.
 
 ## Part 4 — DiT in Production (~10-15 hours)
 
-A deliberate shape change: the labs above are *build from scratch*; these are *read, run, and modify a real production codebase*. The target is [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) — a state-of-the-art open **video** DiT family (text-to-video and image-to-video). Going from image to video is a small dimensional extension, not a redesign — the 2D VAE becomes a 3D causal VAE producing `(C, T, H, W)` latents, patchify and RoPE pick up a temporal axis, compute jumps ~10×, and everything else (DiT block, AdaLN-Zero, flow matching, CFG, text conditioning) carries over unchanged. After Parts 1–3 you can open WAN's source and recognize every block; this part makes you fluent in working with it, including those 3D extensions in production form.
+A deliberate shape change: the labs above are *build from scratch*; these are *read, run, and modify a real production codebase*. The target is [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) — a state-of-the-art open **video** DiT family (text-to-video and image-to-video). Going from image to video is a small dimensional extension, not a redesign — the 2D VAE becomes a 3D causal VAE producing `(C, T, H, W)` latents, patchify and RoPE pick up a temporal axis, compute jumps ~10×, and everything else (DiT block, AdaLN-Zero, flow matching, CFG, text conditioning) carries over unchanged.
 
 | Module | Topic | Lab |
 |---|---|---|
 | 4.1 | WAN inference + code tour | [lab4.1](./lab4.1) |
 | 4.2 | Post-training WAN — hands-on LoRA fine-tune, survey of full SFT / Diffusion-DPO / distillation | [lab4.2](./lab4.2) |
 | 4.3 | Distribution — publish your LoRA, ComfyUI custom node, quantization | [lab4.3](./lab4.3) |
-
-Compute notes: 4.1 runs on M3 with quantization (or rented GPU for full precision); 4.2 needs a rented H100 / A100 for a few hours; 4.3 is laptop-only.
 
 ## Reference Library
 
