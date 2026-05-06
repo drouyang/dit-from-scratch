@@ -1,0 +1,26 @@
+# Manifest for the Comfy Registry (registry.comfy.org).
+# Required if you want one-click install via ComfyUI-Manager's
+# registry-backed search. Optional otherwise — manual `git clone`
+# into ComfyUI/custom_nodes/ works without this file.
+
+[project]
+name = "comfyui-wan-lora-sampler"
+version = "0.1.0"
+description = "ComfyUI custom node: Wan-2.1 T2V-1.3B with optional LoRA"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "torch>=2.4",
+    "diffusers>=0.36",
+    "transformers>=4.40",
+    "peft>=0.10",
+    "safetensors>=0.4",
+]
+
+[project.urls]
+Repository = "https://github.com/your-username/comfyui-wan-lora-sampler"
+
+[tool.comfy]
+PublisherId = "your-username"
+DisplayName = "WAN LoRA Sampler"
+Icon = ""

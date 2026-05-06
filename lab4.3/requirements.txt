@@ -1,15 +1,13 @@
 torch>=2.4
-diffusers>=0.36       # WanPipeline for Wan-2.1 is in stable
+diffusers>=0.36       # WanPipeline, BitsAndBytesConfig
 transformers>=4.40
 accelerate>=0.27
 safetensors>=0.4
 peft>=0.10            # LoRA loading via pipe.load_lora_weights(...)
-imageio[ffmpeg]>=2.34 # export_to_video
-
-# Hosted endpoint
-fastapi>=0.110
-uvicorn>=0.30
-gradio>=4.40
 
 # HuggingFace upload (Path 1)
 huggingface_hub>=0.23
+
+# Quantization (Path 3) — bitsandbytes is CUDA-only.
+# Install only if you have a CUDA GPU; skip otherwise.
+bitsandbytes>=0.43 ; sys_platform == "linux"
