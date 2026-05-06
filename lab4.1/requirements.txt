@@ -1,0 +1,7 @@
+torch>=2.4
+# WanPipeline lives in diffusers main as of May 2026, not in stable releases:
+diffusers @ git+https://github.com/huggingface/diffusers.git
+transformers>=4.40
+accelerate>=0.27
+safetensors>=0.4
+imageio[ffmpeg]>=2.34   # export_to_video uses imageio under the hood
