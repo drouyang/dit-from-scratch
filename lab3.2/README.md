@@ -32,7 +32,9 @@ x = x + gate * mlp(AdaLN(x, c))                 ← MLP (lab 3.1)
 
 Cross-attention is unmodulated (no AdaLN gating around it) — the text tokens already carry conditioning information through their values.
 
-**Why frozen pretrained VAE + text encoder.** Decoupling the three modalities is what makes scale-up tractable:
+### Why frozen pretrained VAE + text encoder
+
+Decoupling the three modalities is what makes scale-up tractable:
 
 ```
    Text encoder     SD-VAE              DiT
@@ -64,7 +66,9 @@ Concrete reasons:
 3. **Latent space is task-agnostic.** SD-VAE's latent encodes "natural images"; CLIP's text encoder encodes "natural language." Neither is specific to text-to-image-on-COCO — they're general-purpose, exactly the kind of pretrained backbone reuse that vision and NLP have done for years.
 4. **Production reality.** SD1.x, SDXL, SD3, FLUX all freeze their VAE and text encoder during DiT training. We're matching the actual recipe.
 
-**Lab vs production scale.** Same architecture, very different parameter counts and data:
+### Lab vs production scale
+
+Same architecture, very different parameter counts and data:
 
 | | Lab 3.2 | SD3 / FLUX (production) |
 |---|---|---|
