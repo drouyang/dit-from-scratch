@@ -66,6 +66,3 @@ Going from image to video is a small dimensional extension, not a redesign — t
 - [DiT paper (Peebles & Xie 2022)](https://arxiv.org/abs/2212.09748) — the architecture this course builds toward.
 - [Stable Diffusion 3 / MMDiT (Esser et al. 2024)](https://arxiv.org/abs/2403.03206) — the modern canonical paper. DiT + latent diffusion + flow matching + multimodal text/image attention, all in one.
 - [Flow Matching (Lipman et al. 2022)](https://arxiv.org/abs/2210.02747), [Rectified Flow (Liu et al. 2022)](https://arxiv.org/abs/2209.03003) — the production training paradigm.
-- Hugging Face [`diffusers`](https://github.com/huggingface/diffusers) — reference implementations of SD3, FLUX, WAN, and friends.
-- [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) — the production codebase Part 4 targets.
-- [LTX-Video](https://github.com/Lightricks/LTX-Video), [HunyuanVideo](https://github.com/Tencent-Hunyuan/HunyuanVideo) — adjacent video DiT codebases worth comparing against WAN.
