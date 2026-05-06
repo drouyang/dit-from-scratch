@@ -246,11 +246,7 @@ def modulate(x, shift, scale):
 - `shift = scale = 0` → `modulate(LN(x), 0, 0) = LN(x)` (vanilla LN)
 - `gate = 0` → `x + 0 * sublayer(...) = x` (the block is the identity)
 
-The model starts as a *pure* residual stack — every block passes its input through unchanged, and the final-layer linear (also zero-initialized) outputs `v = 0`. Training then learns each block's contribution from zero. This is much friendlier than the standard "small random init" because:
-
-1. **No fight at init.** Random sublayer outputs added to the residual stream at depth 12 sum to large random perturbations; AdaLN-Zero has zero perturbation at depth N.
-2. **Each gate is a learned switch.** A block that isn't pulling its weight can keep its gate near zero and the residual flows around it cleanly. Useful capacity emerges layer by layer.
-3. **The output is a learned signal, not a coincidence.** At step 0 the model predicts `v = 0` — a meaningful prior ("don't move"). The loss is then exactly `||v_target||²` and gradients tell the model what *direction* to push outputs in. No "lucky" early predictions to chase.
+The model starts as a *pure* residual stack — every block passes its input through unchanged, and the final-layer linear (also zero-initialized) outputs `v = 0`. Training then learns each block's contribution from zero.
 
 The DiT paper compares four conditioning mechanisms (in-context, cross-attention, plain AdaLN, AdaLN-Zero) and finds AdaLN-Zero wins by a wide margin in FID at every scale they tried. Empirically this single trick is the largest reason DiT trains stably; everything else (patchify, attention shape, flow matching) is shared with non-DiT generators.
 
