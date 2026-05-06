@@ -199,11 +199,20 @@ In lab 3.2 you'll see both compositions stacked: VAE compresses image → latent
 
 ### 2. AdaLN-Zero — the DiT paper's main contribution
 
-Lab 1.4's block was **pre-norm**:
+Lab 1.4's block was **pre-norm** — LayerNorm runs on the input *before* the sublayer, and the residual is added afterward, so the residual stream itself is never normalized:
 
 ```python
-x = x + sublayer(LayerNorm(x))
+x = x + sublayer(LayerNorm(x))                # ← pre-norm: LN before sublayer, residual untouched
 ```
+
+`sublayer` here is a placeholder for either of the two sublayers inside a transformer block — **attention** or **MLP**. Each block applies the pre-norm pattern twice, once per sublayer:
+
+```python
+x = x + attn(LayerNorm(x))                    # sublayer 1: multi-head self-attention
+x = x + mlp (LayerNorm(x))                    # sublayer 2: position-wise MLP (FFN)
+```
+
+(Compare the original 2017 Transformer's **post-norm** — `LayerNorm(x + sublayer(x))` — which sits LN *on* the residual path. Post-norm is harder to train stably past ~12 stacked blocks and needs careful learning-rate warmup; pre-norm leaves a clean unmolested residual, so gradients from deep layers reach early layers without rescaling. Lab 1.4 has the full discussion. GPT-2, LLaMA, ViT, BERT-large, and DiT all use pre-norm.)
 
 DiT replaces vanilla LayerNorm with an **adaptive LayerNorm conditioned on `c`**, and adds a **gate** to the residual:
 
