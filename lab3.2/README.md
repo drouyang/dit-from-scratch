@@ -98,17 +98,13 @@ First run downloads three models from HuggingFace (cached at `~/.cache/huggingfa
 - **CLIP text encoder**: ~250 MB
 - **Pokemon GPT-4 captions** (`diffusers/pokemon-gpt4-captions`): ~85 MB for 833 image-caption pairs
 
-All three are public — no HuggingFace authentication required.
-
-> **If you do hit a gated/auth error** (HF policies change occasionally for any dataset), the fix is: create a read-scope token at https://huggingface.co/settings/tokens, click "Agree and access repository" on the dataset's page, then either run `huggingface-cli login` (interactive) or `export HF_TOKEN=hf_...` before `python train.py`.
-
 ## Train
 
 ```bash
 python train.py
 ```
 
-Defaults: 833 Pokemon image-caption pairs at 64×64, 20K training steps, batch size 32, ~2–4 hours on M3 MPS. Saves `model.pt`.
+Defaults: 833 Pokemon image-caption pairs at 64×64, 20K training steps, batch size 32. Measured 2.5 hours on M3 MPS. Saves `model.pt`.
 
 The DiT is small: 8 blocks × 384 hidden × 6 heads ≈ 10M parameters. The pretrained CLIP and VAE add ~120M and ~84M parameters respectively, but those don't get gradient updates — they're forward-only pretrained features.
 
