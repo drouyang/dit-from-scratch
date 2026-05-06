@@ -1,4 +1,4 @@
-"""Train the latent text-to-image DiT on a tiny COCO subset.
+"""Train the latent text-to-image DiT on a tiny image-caption set.
 
 End-to-end pipeline:
     image (B, 3, 64, 64) ─► SD-VAE.encode ─► z_0 (B, 4, 8, 8)
@@ -8,7 +8,8 @@ End-to-end pipeline:
     pred = DiT(z_t, t, text_tokens, text_pooled, mask)
     loss = MSE(pred, noise - z_0)                 (velocity target)
 
-Defaults are sized for a few-hour M3 run on ~5K COCO image-caption pairs.
+Defaults are sized for a few-hour M3 run on the 833 Pokemon BLIP-captioned
+image-caption pairs.
 """
 
 import argparse
@@ -37,8 +38,8 @@ def main():
     p.add_argument("--steps",         type=int,   default=20_000)
     p.add_argument("--batch-size",    type=int,   default=32)
     p.add_argument("--lr",            type=float, default=1e-4)
-    p.add_argument("--n-samples",     type=int,   default=5000,
-                   help="how many COCO images to use")
+    p.add_argument("--n-samples",     type=int,   default=833,
+                   help="how many image-caption pairs to use (source has 833)")
     p.add_argument("--image-size",    type=int,   default=64)
     p.add_argument("--label-dropout", type=float, default=0.1,
                    help="probability of replacing text with the null embedding (CFG)")
@@ -57,7 +58,7 @@ def main():
     vae = SDVae().to(device)
 
     # Data.
-    print(f"loading {args.n_samples} COCO image-caption pairs...")
+    print(f"loading {args.n_samples} image-caption pairs...")
     ds = TinyCOCO(n_samples=args.n_samples, image_size=args.image_size)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True,
                         collate_fn=collate, num_workers=2)

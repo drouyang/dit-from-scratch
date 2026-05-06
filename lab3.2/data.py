@@ -1,47 +1,54 @@
-"""Tiny COCO subset loader.
+"""Tiny image-caption loader for text-to-image training.
 
-We use a small slice of MS-COCO captions (~5K image-caption pairs) at 64×64
-resolution. Just enough that the DiT has real text-image pairs to learn from,
-and the captions are diverse enough that the text encoder is doing real work
-(unlike CIFAR-10 where you'd only have 10 distinct prompts).
+We use `lambdalabs/pokemon-blip-captions` — 833 Pokemon images with
+BLIP-generated captions like *"a drawing of a green pokemon with red eyes"*.
+Tiny (~85 MB), parquet-formatted (fast to load on current `datasets`
+versions), and the captions are diverse enough that the text encoder is
+doing real work — the model has to learn how individual color, shape, and
+feature words map to image regions.
+
+Why not raw MS-COCO: the canonical COCO captions datasets on HuggingFace
+use *script-based* loaders that the current `datasets` library refuses
+("Dataset scripts are no longer supported"). Pokemon-blip-captions uses
+native parquet, so it works without library version juggling.
+
+Authentication note: `lambdalabs/pokemon-blip-captions` is a *gated* dataset
+on HuggingFace. To download it the first time you need to:
+    1. Create an HF token at https://huggingface.co/settings/tokens
+    2. Visit https://huggingface.co/datasets/lambdalabs/pokemon-blip-captions
+       and accept the dataset's access terms.
+    3. Authenticate locally: either run `huggingface-cli login` (interactive),
+       or export `HF_TOKEN=hf_...` in your shell before running `python train.py`.
+
+Pedagogically the same as COCO at this scale: real natural-language captions,
+the model learns color/shape/feature words → image-region mappings.
 
 Data flow:
-    - HuggingFace `datasets` library streams a small subset
+    - HuggingFace `datasets` downloads the parquet once (cached)
     - Each image is center-cropped + resized to 64×64
     - Pixels normalized to [-1, 1] to match SD-VAE's expected input range
-    - Each image has 5 human captions; we pick one randomly per epoch
-    - The caption is left as a raw string here — tokenization happens inside
-      `CLIPTextEncoder.encode` so the text encoder owns its tokenizer
+    - Captions are passed as raw strings — tokenization happens inside
+      CLIPTextEncoder.encode (the text encoder owns its tokenizer)
 """
 
-import random
-from io import BytesIO
-
 import torch
-from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
 
-class TinyCOCO(Dataset):
-    """A small COCO captions subset. Lazy-streams from HuggingFace `datasets`.
+class TinyDataset(Dataset):
+    """Pokemon BLIP captions — small image-caption set for text-to-image.
 
     Args:
-        n_samples: cap on the number of images. ~5K is a reasonable laptop scale.
+        n_samples: cap on the number of images. Source has 833 total.
         image_size: resolution to resize/crop to (default 64).
-        split: "train" or "validation".
     """
 
-    def __init__(self, n_samples=5000, image_size=64, split="train"):
+    def __init__(self, n_samples=833, image_size=64):
         from datasets import load_dataset
-        # HuggingFace mirror of MS-COCO 2017 with captions. Streaming avoids
-        # downloading the full ~20GB dataset.
-        ds = load_dataset("yerevann/coco-karpathy", split=split, streaming=True)
-        self.samples = []
-        for i, ex in enumerate(ds):
-            if i >= n_samples:
-                break
-            self.samples.append(ex)
+        ds = load_dataset("lambdalabs/pokemon-blip-captions", split="train")
+        n = min(n_samples, len(ds))
+        self.samples = [ds[i] for i in range(n)]
 
         self.transform = transforms.Compose([
             transforms.Resize(image_size),
@@ -55,20 +62,11 @@ class TinyCOCO(Dataset):
 
     def __getitem__(self, idx):
         ex = self.samples[idx]
-        # Image: bytes or PIL depending on dataset
         img = ex["image"]
-        if isinstance(img, dict) and "bytes" in img:
-            img = Image.open(BytesIO(img["bytes"]))
         if img.mode != "RGB":
             img = img.convert("RGB")
         x = self.transform(img)
-
-        # Captions: pick one of the 5 randomly
-        captions = ex.get("captions") or ex.get("sentences") or [ex.get("caption", "")]
-        if isinstance(captions, list) and isinstance(captions[0], dict):
-            captions = [c.get("raw") or c.get("text") for c in captions]
-        caption = random.choice(captions) if captions else ""
-
+        caption = ex["text"]   # single BLIP-generated caption per image
         return x, caption
 
 
@@ -78,3 +76,7 @@ def collate(batch):
     xs = torch.stack([b[0] for b in batch])
     captions = [b[1] for b in batch]
     return xs, captions
+
+
+# Backward-compat alias so train.py's `from data import TinyCOCO` still works.
+TinyCOCO = TinyDataset

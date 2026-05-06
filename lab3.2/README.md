@@ -1,6 +1,6 @@
 # Module 3.2 — Latent text-to-image DiT
 
-**Goal**: train a real text-to-image DiT — pretrained CLIP text encoder + pretrained SD-VAE + the lab 3.1 DiT architecture (with cross-attention added) — on a tiny subset of **MS-COCO** (Common Objects in Context: 330K natural photographs, each with five human-written captions like *"a man riding a bike on a city street"* — the canonical image-text benchmark). 5K image-caption pairs is tiny by production standards but enough that the text encoder is doing real work over real natural language, not class labels. End-to-end "type a prompt, get an image." This is the SD3 / FLUX recipe at small scale.
+**Goal**: train a real text-to-image DiT — pretrained CLIP text encoder + pretrained SD-VAE + the lab 3.1 DiT architecture (with cross-attention added) — on **`lambdalabs/pokemon-blip-captions`**: 833 Pokemon images with BLIP-generated captions like *"a drawing of a green pokemon with red eyes"*. 833 pairs is tiny by production standards, but the captions are real natural language — diverse color, shape, and feature words across hundreds of Pokemon designs — so the text encoder is doing real work, not class lookup. End-to-end "type a prompt, get an image." This is the SD3 / FLUX recipe at small scale, applied to a laptop-friendly dataset. *(MS-COCO would be the canonical choice, but the popular HF COCO-captions datasets all use script-based loaders that the current `datasets` library refuses; pokemon-blip-captions uses native parquet and works once you authenticate — see the Setup section.)*
 
 **Why this matters for DiT**: this is the first lab where everything is *production-shape*. Pretrained text encoder, pretrained VAE, learned DiT in the middle, flow matching as the training paradigm, CFG for conditioning strength — exactly the stack that runs in production text-to-image. Lab 3.1 verified the DiT architecture in isolation; this lab puts it inside the actual production pipeline.
 
@@ -64,7 +64,7 @@ Same architecture, very different parameter counts and data:
 | VAE | SD-VAE-ft-mse — **84M** params, 4-channel latent | Same SD-VAE family — 84M (sometimes upgraded to 16-channel) |
 | Text encoder | CLIP-base — **120M** params, 512-dim, 77 tokens | CLIP-L + CLIP-G + T5-XXL — together **~12B** params, longer context |
 | DiT | **10M** (8 blocks × 384 hidden) | **2B** (SD3) / **12B** (FLUX) |
-| Training data | **5K** COCO pairs | hundreds of millions of (image, caption) pairs |
+| Training data | **833** Pokemon image-caption pairs | hundreds of millions of (image, caption) pairs |
 | Training compute | ~hours on a laptop | thousands of A100/H100-hours |
 
 The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct natural images cleanly, so production keeps it small. Almost all the production scale-up went into the DiT itself and into a much larger text encoder stack (T5-XXL alone is ~11B params, dwarfing everything else combined).
@@ -77,7 +77,7 @@ The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct na
 | --- | --- |
 | `vae.py` | Pretrained SD-VAE (`stabilityai/sd-vae-ft-mse`) wrapper: `.encode(image) → latent`, `.decode(latent) → image`. Includes the standard 0.18215 scale factor. |
 | `text_encoder.py` | Pretrained CLIP text encoder (`openai/clip-vit-base-patch32`) wrapper. Returns per-token outputs (for cross-attention), pooled output (for AdaLN), and attention mask. |
-| `data.py` | Tiny COCO subset (~5K image-caption pairs) loaded via HuggingFace `datasets`, center-cropped + resized to 64×64. |
+| `data.py` | `lambdalabs/pokemon-blip-captions` (833 image-caption pairs) loaded via HuggingFace `datasets`, center-cropped + resized to 64×64. |
 | `dit.py` | DiT with `SelfAttention` + `CrossAttention` + `MLP` per block. `TextProjector` (replaces `LabelEmbedder`) and `TextTokenProjector` for the two text-conditioning paths. |
 | `flow.py` | Flow matching `fm_q_sample` and `fm_euler_sample`, signature adapted for text inputs. |
 | `train.py` | Training loop. Encodes images via VAE and captions via CLIP at each step (pretrained, no_grad), trains DiT on the velocity-prediction objective. |
@@ -95,7 +95,26 @@ pip install -r requirements.txt
 First run downloads three models from HuggingFace (cached at `~/.cache/huggingface/`):
 - **SD-VAE**: ~335 MB
 - **CLIP text encoder**: ~250 MB
-- **COCO captions subset** (`nlphuji/mscoco_2014_5k_test_image_text_retrieval`): ~250 MB for 5K image-caption pairs
+- **Pokemon BLIP captions** (`lambdalabs/pokemon-blip-captions`): ~85 MB for 833 image-caption pairs (**gated**; see auth steps below)
+
+### HuggingFace authentication
+
+`lambdalabs/pokemon-blip-captions` is a gated dataset on the HuggingFace Hub — the first download requires you to authenticate and accept the dataset's terms. One-time setup:
+
+1. **Get a token.** Create a read-scope token at https://huggingface.co/settings/tokens. Copy the `hf_...` string.
+2. **Accept the dataset terms.** Visit https://huggingface.co/datasets/lambdalabs/pokemon-blip-captions while logged in and click "Agree and access repository." Without this step the token alone won't work — Hub gates are per-dataset.
+3. **Authenticate locally.** Two equivalent options:
+
+   ```bash
+   # Option A — interactive (writes the token to ~/.cache/huggingface/token):
+   pip install huggingface_hub
+   huggingface-cli login          # paste the token when prompted
+
+   # Option B — env var (good for one-off shells / CI):
+   export HF_TOKEN=hf_...         # the token from step 1
+   ```
+
+After that, `python train.py` downloads the dataset normally. The two pretrained model checkpoints (SD-VAE, CLIP) aren't gated — they download without auth.
 
 ## Train
 
@@ -103,7 +122,7 @@ First run downloads three models from HuggingFace (cached at `~/.cache/huggingfa
 python train.py
 ```
 
-Defaults: 5K COCO pairs at 64×64, 20K training steps, batch size 32, ~2–4 hours on M3 MPS. Saves `model.pt`.
+Defaults: 833 Pokemon image-caption pairs at 64×64, 20K training steps, batch size 32, ~2–4 hours on M3 MPS. Saves `model.pt`.
 
 The DiT is small: 8 blocks × 384 hidden × 6 heads ≈ 10M parameters. The pretrained CLIP and VAE add ~120M and ~84M parameters respectively, but those don't get gradient updates — they're forward-only pretrained features.
 
@@ -111,14 +130,14 @@ The DiT is small: 8 blocks × 384 hidden × 6 heads ≈ 10M parameters. The pret
 
 ```bash
 # Single prompt, 4 generations:
-python sample.py --prompt "a cat sitting on a chair"
+python sample.py --prompt "a green pokemon with red eyes"
 
 # Multiple prompts, grid:
-python sample.py --prompts "a red car" "a blue truck" "a yellow taxi" \
+python sample.py --prompts "a fire pokemon" "a water pokemon" "a flying pokemon" \
                  --cfg-scale 4.0
 
 # Production-like settings:
-python sample.py --prompt "a dog running on a beach" \
+python sample.py --prompt "a blue dragon pokemon with horns" \
                  --steps 50 --cfg-scale 7.0
 ```
 
@@ -128,12 +147,12 @@ CFG scale ~3–7 is the production sweet spot; the same range used by SD3 / FLUX
 
 ## What to expect at this scale
 
-This is a demonstrator, not a good text-to-image model. With 10M DiT params, 5K image-caption pairs, and ~1 hour of M3 training, you should expect:
+This is a demonstrator, not a good text-to-image model. With 10M DiT params, 833 image-caption pairs, and a few hours of M3 training, you should expect:
 
-- **Recognizable objects** for common prompts (`"a cat"`, `"a car"`, `"a tree"`).
-- **Color follows captions** somewhat (`"a red car"` → reddish-ish).
-- **Composition is poor** — multi-object scenes ("a dog and a cat") often produce a single ambiguous blob.
-- **Text legibility is zero** — even production models at our scale struggle.
+- **Pokemon-shaped outputs** regardless of prompt — that's all the model has ever seen, so even unrelated prompts get drawn as pokemon-like blobs.
+- **Color follows captions** somewhat (`"a red pokemon"` → reddish-ish, `"a blue pokemon"` → blueish).
+- **Feature words map roughly** — "with horns", "with wings", "with red eyes" can shift the silhouette in the expected direction at high CFG.
+- **Composition is poor** — multi-feature prompts ("a green dragon with red eyes and horns") often blur together.
 - **Photographic detail is poor** — 64×64 + tiny model = blurry, posterized output.
 
 That's fine. The lab's goal is to demonstrate the *mechanism* — typing different prompts produces different images, and CFG amplifies the conditioning. The qualitative gap to SD3 / FLUX is purely scale (model size × dataset size × compute), not architecture or recipe.
