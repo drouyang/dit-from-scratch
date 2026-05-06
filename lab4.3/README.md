@@ -1,6 +1,6 @@
-# Module 4.3 — Post-training WAN (LoRA)
+# Module 4.3 — Post-training — LoRA
 
-**Goal**: take WAN-2.1 T2V-1.3B (the smallest variant of the Wan-Video team's open production text-to-video DiT family) and *post-train* it. Hands-on: LoRA fine-tune it on a tiny custom video-caption set so the model adapts to a new style or concept. Full SFT — every parameter trainable — is its own hands-on lab (lab 4.5).
+**Goal**: take WAN-2.1 T2V-1.3B (the smallest variant of the Wan-Video team's open production text-to-video DiT family) and *post-train* it. Hands-on: LoRA fine-tune it on a tiny custom video-caption set so the model adapts to a new style or concept. Full SFT — every parameter trainable — is its own hands-on lab (lab 4.4).
 
 **Why this matters for DiT**: post-training is what *every* production model goes through after the initial pretraining run. Pretraining gets you "knows how to make video"; post-training gets you "makes video the way *you* want." For a small team or solo developer, post-training is also the *only* place you have leverage — pretraining a 14B-parameter video model is a $1M+ cluster job, but a LoRA fine-tune of a 1.3B variant fits in $20 of rented H100 time. This lab teaches the cheap, ubiquitous version (LoRA) end-to-end and orients you on the rest of the landscape.
 
@@ -19,7 +19,7 @@ Full SFT                ~1.3 B base params yes, all          $50–500 (1.3B on 
                                                              $1k–10k+ (production scale)
 ```
 
-This lab does LoRA hands-on; lab 4.5 does full SFT hands-on.
+This lab does LoRA hands-on; lab 4.4 does full SFT hands-on.
 
 ## What LoRA actually is
 
@@ -207,7 +207,7 @@ typical use       style / character     production model variants
 
 Why production models do full SFT instead of LoRA: the rank-`r` constraint ultimately caps how much the base can change. For a major capability shift (re-aiming the model at a different domain, or substantially upgrading quality), you need the full parameter space. Stability-AI's various SD3 variants, Black-Forest-Labs's FLUX-dev → FLUX-pro, Wan-Lightning all involve full SFT on top of pretrained checkpoints.
 
-For hands-on full SFT of WAN-2.1 T2V-1.3B on a 4090 (using 8-bit AdamW + gradient checkpointing to fit), see **lab 4.5**. The diffusers reference is `diffusers/examples/text_to_video/train_text_to_video_lora.py` (LoRA) and `train_text_to_video.py` (full SFT) — same code shape, just `unet.requires_grad_(False)` becomes `unet.requires_grad_(True)`.
+For hands-on full SFT of WAN-2.1 T2V-1.3B on a 4090 (using 8-bit AdamW + gradient checkpointing to fit), see **lab 4.4**. The diffusers reference is `diffusers/examples/text_to_video/train_text_to_video_lora.py` (LoRA) and `train_text_to_video.py` (full SFT) — same code shape, just `unet.requires_grad_(False)` becomes `unet.requires_grad_(True)`.
 
 ### Continued pretraining
 
@@ -231,7 +231,7 @@ Goal                            Reach for
 ────────────────────            ──────────────────────
 add a style / character         LoRA  (this lab)
 fix a model behavior            LoRA  (often) or full SFT
-ship a production variant       full SFT  (lab 4.5)
+ship a production variant       full SFT  (lab 4.4)
 domain-shift the model          continued pretraining
 ```
 
@@ -245,7 +245,7 @@ What's new is *practical*:
 
 - **Production codebases are big.** `diffusers`' Wan implementation is thousands of lines. You don't read all of it; you read the bits that matter (the transformer block, the pipeline forward, the loss).
 - **Hyperparameter culture.** rank, alpha, learning rate, target modules — there's a community norm for each, and you mostly want to follow it before innovating.
-- **Distribution is the second half.** Training a LoRA is half the work; making it usable for someone else (uploading the adapter, providing trigger words, packaging it into a ComfyUI custom node) is the other half. That's lab 4.4.
+- **Distribution is the second half.** Training a LoRA is half the work; making it usable for someone else (uploading the adapter, providing trigger words, packaging it into a ComfyUI custom node) is the other half. That's lab 4.5.
 
 ### Where to go deeper
 

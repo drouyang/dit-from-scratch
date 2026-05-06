@@ -53,9 +53,9 @@ Going from image to video is a small dimensional extension, not a redesign — t
 |---|---|---|
 | 4.1 | WAN inference + code tour | [lab4.1](./lab4.1) |
 | 4.2 | Inference acceleration — SGLang-Diffusion, kernel fusion, attention backends, Cache-DiT, sequence parallelism | [lab4.2](./lab4.2) |
-| 4.3 | Post-training WAN (LoRA) — hands-on LoRA fine-tune | [lab4.3](./lab4.3) |
-| 4.4 | Distribution — publish your LoRA, ComfyUI custom node, quantization | [lab4.4](./lab4.4) |
-| 4.5 | Full SFT (advanced post-training) — every parameter trainable, 8-bit AdamW + gradient checkpointing on a 4090 | [lab4.5](./lab4.5) |
+| 4.3 | Post-training — **LoRA** — parameter-efficient fine-tune (~5M trainable params, ~140 MB artifact) | [lab4.3](./lab4.3) |
+| 4.4 | Post-training — **Full SFT** — every parameter trainable (~1.3B params, ~2.6 GB artifact); 8-bit AdamW + gradient checkpointing fit it on a 4090 | [lab4.4](./lab4.4) |
+| 4.5 | Distribution — publish your post-trained model, ComfyUI custom node, quantization | [lab4.5](./lab4.5) |
 
 ## After the labs
 

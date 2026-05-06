@@ -1,13 +1,14 @@
 torch>=2.4
-diffusers>=0.36       # WanPipeline, BitsAndBytesConfig
+diffusers>=0.36       # WanPipeline for Wan-2.1 is in stable
 transformers>=4.40
-accelerate>=0.27
+accelerate>=0.27      # mixed precision + DDP/FSDP wrappers
 safetensors>=0.4
-peft>=0.10            # LoRA loading via pipe.load_lora_weights(...)
 
-# HuggingFace upload (Path 1)
-huggingface_hub>=0.23
+# 8-bit AdamW from bitsandbytes is what makes 1.3B-parameter SFT
+# fit a single 4090. Stores Adam's m and v moments at int8 instead
+# of fp32, reducing optimizer state from ~10 GB to ~2.6 GB.
+bitsandbytes>=0.43
 
-# Quantization (Path 3) — bitsandbytes is CUDA-only.
-# Install only if you have a CUDA GPU; skip otherwise.
-bitsandbytes>=0.43 ; sys_platform == "linux"
+# Video data loading (same as lab 4.2)
+decord>=0.6
+imageio[ffmpeg]>=2.34
