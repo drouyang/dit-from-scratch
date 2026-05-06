@@ -32,11 +32,6 @@ A DiT block adds `c`-driven modulation around each sublayer's LN, gates each sub
 x ─┬─► LN ─► modulate(shift_a, scale_a) ─► MHA+RoPE ─► × gate_a ─┐ ┌─► LN ─► modulate(shift_m, scale_m) ─► MLP ─► × gate_m ─┐
    │                                                              ▼ │                                                        ▼
    └────────────────────────────────────────────────────────────►⊕─┴──────────────────────────────────────────────────────►⊕─► out
-              ▲                                                                       ▲
-              │                                                                       │
-              └─── shift_a, scale_a, gate_a, shift_m, scale_m, gate_m = adaLN_modulation(c)
-                                                                        │
-                                                                        └── = Linear( SiLU(c) )    ← Linear is zero-initialized
 ```
 
 In code, each sublayer is two steps — **predict** the modulation parameters from `c`, then **apply** them to the activations:
