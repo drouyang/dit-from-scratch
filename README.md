@@ -59,7 +59,7 @@ Going from image to video is a small dimensional extension, not a redesign — t
 
 ## After the labs
 
-[`EFFICIENCY.md`](./EFFICIENCY.md) is a curated reading list about production parallelism (FSDP-2, Ring Attention, xfuser), VAE latent caching, distillation (LCM/DMD/Lightning), quantization, etc.
+[`EFFICIENCY.md`](./EFFICIENCY.md) is a curated reading list about production parallelism (FSDP-2, Ring Attention, xfuser), VAE latent caching, quantization, etc.
 
 ## Reference Library
 

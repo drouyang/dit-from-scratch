@@ -22,7 +22,7 @@ Read these first if you don't already have a working model of multi-GPU parallel
 4. **Selective activation checkpointing** — fits between (1) and (5); needed for any model >7 B.
 5. **Distributed checkpointing** — boring but non-skippable at 14 B+ params.
 
-Skip the inference acceleration sections below until you're solid on the parallelism layer above — distillation / TeaCache / KV-caching are optimizations on top of a working training stack, not the stack itself.
+Skip the inference acceleration sections below until you're solid on the parallelism layer above — TeaCache / KV-caching / quantization are optimizations on top of a working training stack, not the stack itself.
 
 ### Sharding & parallelism
 
@@ -58,7 +58,7 @@ Skip the inference acceleration sections below until you're solid on the paralle
 
 ## Inference acceleration
 
-The runtime layer is GPU-engineer territory: compilation, caching infrastructure, quantization runtime, multi-GPU inference. The *algorithmic* layer (training a faster student via distillation, deciding which features to cache across steps) is ML-engineering work — you cooperate with it but you don't own the recipe. Subsections below are split accordingly; spend the bulk of your time on the first half.
+The runtime layer is GPU-engineer territory: compilation, caching infrastructure, quantization runtime, multi-GPU inference. The *algorithmic* layer (deciding which features to cache across steps, recipe-level scheduler choices) is ML-engineering work — you cooperate with it but you don't own the recipe. Subsections below are split accordingly; spend the bulk of your time on the first half.
 
 ### Runtime — what GPU eng owns
 
@@ -85,14 +85,7 @@ Same `xfuser` / Wan2.2 distributed code referenced in the training section is al
 
 ### ML-team-owned algorithm changes (context only, not your day job)
 
-These either train a new model (distillation) or design recipe-level decisions about what features are temporally coherent enough to cache (TeaCache / DeepCache). You implement the runtime hooks ML asks for; you don't pick the recipe. Read once for awareness, deprioritize against the runtime work above.
-
-#### Step distillation
-
-- **[Latent Consistency Models (Luo et al. 2023)](https://arxiv.org/abs/2310.04378)** — original consistency-distillation for diffusion.
-- **[DMD / DMD2 (Yin et al. 2024)](https://arxiv.org/abs/2311.18828)** — distribution matching distillation; current SOTA recipe.
-- **[Wan2.2-Lightning](https://huggingface.co/lightx2v/Wan2.2-Lightning)** — official 4-step distilled WAN.
-- **[Consistency Trajectory Models (Kim et al. 2023)](https://arxiv.org/abs/2310.02279)** — math underneath few-step samplers.
+These design recipe-level decisions about what features are temporally coherent enough to cache (TeaCache / DeepCache). You implement the runtime hooks ML asks for; you don't pick the recipe. Read once for awareness, deprioritize against the runtime work above.
 
 #### Step / feature caching
 
