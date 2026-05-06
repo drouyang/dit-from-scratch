@@ -17,10 +17,12 @@ sampling:    z (4, 8, 8) ──VAE.decode──► image (3, 64, 64)
 
 The DiT itself doesn't know it's operating on latents — it just sees a `(B, 4, 8, 8)` tensor. Same architecture as lab 3.1, just reconfigured: `latent_channels=4`, `latent_size=8`, `patch_size=2`.
 
-**2. Class labels become text embeddings.** Pretrained CLIP encodes each caption in two forms:
+**2. Class labels become text embeddings.** Two encoding granularities are needed, because each handles a job the other can't:
 
-- **Pooled** (B, 512): a single summary vector per prompt. Drives AdaLN-Zero modulation alongside the time embedding (`c = t_embed(t) + text_proj(pooled)`). Same mechanism as lab 3.1's `class_embed(y)`, just with a different source.
-- **Per-token** (B, 77, 512): one vector per text token (CLIP's tokenizer pads to 77). Each DiT block has a new **cross-attention** sublayer: image tokens (queries) attend to text tokens (keys, values). This is what lets the model route information from individual words in the prompt to specific spatial positions in the image.
+- **AdaLN-Zero needs a single per-prompt vector.** We use CLIP's **pooled** output (B, 512) in the modulation: `c = t_embed(t) + text_proj(pooled)`.
+- **Attribute binding needs word-level structure.** Pooled collapses too much: "a red car" and "a blue car" produce nearly identical pooled vectors, so the model can't reliably tie "red" to the car. CLIP's **per-token** outputs (B, 77, 512) preserve the structure. We feed them as keys/values into a new **cross-attention** sublayer in each DiT block, where image patches (queries) decide locally which words to listen to.
+
+CLIP gives us both forms in one forward pass, but the *reason* we use both is that neither alone is enough — pooled-only loses attribute binding; per-token-only loses the AdaLN-Zero modulation channel.
 
 So each DiT block now has three sublayers instead of two:
 
