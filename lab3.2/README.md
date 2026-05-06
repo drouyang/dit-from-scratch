@@ -34,9 +34,9 @@ Cross-attention is unmodulated (no AdaLN gating around it) — the text tokens a
 
 ### Why frozen pretrained VAE + text encoder
 
-**Latent space is task-agnostic.** SD-VAE's latent encodes "natural images"; CLIP's text encoder encodes "natural language." Neither is specific to text-to-image-on-COCO — they're general-purpose, exactly the kind of pretrained backbone reuse that vision and NLP have done for years. SD-VAE was trained on a curated LAION subset (hundreds of millions of images, with perceptual + adversarial losses). CLIP saw 400M (text, image) pairs.
-   
-Decoupling the three modalities is what makes scale-up tractable:
+**Latent space is task-agnostic.** SD-VAE's latent encodes natural images; CLIP's text encoder encodes natural language. Neither is specific to our text-to-image task — they're general-purpose pretrained backbones, the same reuse pattern vision and NLP have relied on for years. SD-VAE was trained on a curated LAION subset (hundreds of millions of images, perceptual + adversarial losses); CLIP saw 400M (text, image) pairs. We can't replicate either at lab scale, so reusing their checkpoints is the only sensible choice.
+
+**Decoupling makes scale-up tractable.**
 
 ```
    Text encoder     SD-VAE              DiT
@@ -45,11 +45,11 @@ Decoupling the three modalities is what makes scale-up tractable:
    FROZEN           FROZEN              (image-latent, text-embedding) pairs
 ```
 
-"FROZEN" means the VAE and text encoder run *only* forward — no gradient flows back into them, no optimizer state, no parameter updates. Their weights stay the same from the first step to the last.
+**FROZEN** means the VAE and text encoder run *only* forward — no gradient flows back, no optimizer state, no parameter updates. Their weights stay identical from the first step to the last.
 
-The DiT learns to navigate the *fixed* latent space defined by SD-VAE, conditioned on the *fixed* text representation from CLIP. If you trained them jointly, every DiT experiment would also need to budget VAE + text-encoder retraining — that kills iteration speed. By freezing, every change is local to the DiT.
+The DiT learns to navigate the fixed latent space defined by SD-VAE, conditioned on the fixed text representation from CLIP. If you trained them jointly, every DiT experiment would also have to retrain the VAE and text encoder — that kills iteration speed. By freezing, every change is local to the DiT.
 
-SD1.x, SDXL, SD3, FLUX all freeze their VAE and text encoder during DiT training. We're matching the actual recipe.
+**Production reality.** SD1.x, SDXL, SD3, FLUX all freeze their VAE and text encoder during DiT training. We're matching the actual recipe.
 
 ### Lab vs production scale
 
