@@ -1,14 +1,14 @@
 # Module 3.2 — Latent text-to-image DiT
 
-**Goal**: train a real text-to-image DiT — frozen CLIP text encoder + frozen SD-VAE + the lab 3.1 DiT architecture (with cross-attention added) — on a tiny COCO subset. End-to-end "type a prompt, get an image." This is the SD3 / FLUX recipe at small scale.
+**Goal**: train a real text-to-image DiT — pretrained CLIP text encoder + pretrained SD-VAE + the lab 3.1 DiT architecture (with cross-attention added) — on a tiny subset of **MS-COCO** (Common Objects in Context: 330K natural photographs, each with five human-written captions like *"a man riding a bike on a city street"* — the canonical image-text benchmark). 5K image-caption pairs is tiny by production standards but enough that the text encoder is doing real work over real natural language, not class labels. End-to-end "type a prompt, get an image." This is the SD3 / FLUX recipe at small scale.
 
-**Why this matters for DiT**: this is the first lab where everything is *production-shape*. Frozen pretrained text encoder, frozen pretrained VAE, learned DiT in the middle, flow matching as the training paradigm, CFG for conditioning strength — exactly the stack that runs in production text-to-image. Lab 3.1 verified the DiT architecture in isolation; this lab puts it inside the actual production pipeline.
+**Why this matters for DiT**: this is the first lab where everything is *production-shape*. Pretrained text encoder, pretrained VAE, learned DiT in the middle, flow matching as the training paradigm, CFG for conditioning strength — exactly the stack that runs in production text-to-image. Lab 3.1 verified the DiT architecture in isolation; this lab puts it inside the actual production pipeline.
 
 ## What changed from lab 3.1
 
 Two architectural changes; everything else carries over.
 
-**1. Pixels become latents.** SD-VAE's encoder turns a 64×64 RGB image into a (4, 8, 8) spatial latent. The DiT operates on that latent shape. SD-VAE's decoder turns the generated latent back into an image at sampling time. The VAE is **frozen pretrained** — we use OpenAI / Stability's checkpoint directly, no training.
+**1. Pixels become latents.** SD-VAE's encoder turns a 64×64 RGB image into a (4, 8, 8) spatial latent. The DiT operates on that latent shape. SD-VAE's decoder turns the generated latent back into an image at sampling time. The VAE is **pretrained** — we use OpenAI / Stability's checkpoint directly, no training.
 
 ```
 training:    image (3, 64, 64) ──VAE.encode──► z (4, 8, 8) ──flow matching on z──
@@ -17,7 +17,7 @@ sampling:    z (4, 8, 8) ──VAE.decode──► image (3, 64, 64)
 
 The DiT itself doesn't know it's operating on latents — it just sees a `(B, 4, 8, 8)` tensor. Same architecture as lab 3.1, just reconfigured: `latent_channels=4`, `latent_size=8`, `patch_size=2`.
 
-**2. Class labels become text embeddings.** Frozen CLIP encodes each caption in two forms:
+**2. Class labels become text embeddings.** Pretrained CLIP encodes each caption in two forms:
 
 - **Pooled** (B, 512): a single summary vector per prompt. Drives AdaLN-Zero modulation alongside the time embedding (`c = t_embed(t) + text_proj(pooled)`). Same mechanism as lab 3.1's `class_embed(y)`, just with a different source.
 - **Per-token** (B, 77, 512): one vector per text token (CLIP's tokenizer pads to 77). Each DiT block has a new **cross-attention** sublayer: image tokens (queries) attend to text tokens (keys, values). This is what lets the model route information from individual words in the prompt to specific spatial positions in the image.
@@ -36,12 +36,12 @@ Cross-attention is unmodulated (no AdaLN gating around it) — the text tokens a
 
 | File | What it is |
 | --- | --- |
-| `vae.py` | Frozen SD-VAE (`stabilityai/sd-vae-ft-mse`) wrapper: `.encode(image) → latent`, `.decode(latent) → image`. Includes the standard 0.18215 scale factor. |
-| `text_encoder.py` | Frozen CLIP text encoder (`openai/clip-vit-base-patch32`) wrapper. Returns per-token outputs (for cross-attention), pooled output (for AdaLN), and attention mask. |
+| `vae.py` | Pretrained SD-VAE (`stabilityai/sd-vae-ft-mse`) wrapper: `.encode(image) → latent`, `.decode(latent) → image`. Includes the standard 0.18215 scale factor. |
+| `text_encoder.py` | Pretrained CLIP text encoder (`openai/clip-vit-base-patch32`) wrapper. Returns per-token outputs (for cross-attention), pooled output (for AdaLN), and attention mask. |
 | `data.py` | Tiny COCO subset (~5K image-caption pairs) loaded via HuggingFace `datasets`, center-cropped + resized to 64×64. |
 | `dit.py` | DiT with `SelfAttention` + `CrossAttention` + `MLP` per block. `TextProjector` (replaces `LabelEmbedder`) and `TextTokenProjector` for the two text-conditioning paths. |
 | `flow.py` | Flow matching `fm_q_sample` and `fm_euler_sample`, signature adapted for text inputs. |
-| `train.py` | Training loop. Encodes images via VAE and captions via CLIP at each step (frozen, no_grad), trains DiT on the velocity-prediction objective. |
+| `train.py` | Training loop. Encodes images via VAE and captions via CLIP at each step (pretrained, no_grad), trains DiT on the velocity-prediction objective. |
 | `sample.py` | Text → image CLI. Loads everything, runs Euler ODE in latent space, decodes through VAE. Supports `--prompts` for grid generation. |
 
 ## Setup
@@ -66,7 +66,7 @@ python train.py
 
 Defaults: 5K COCO pairs at 64×64, 20K training steps, batch size 32, ~2–4 hours on M3 MPS. Saves `model.pt`.
 
-The DiT is small: 8 blocks × 384 hidden × 6 heads ≈ 10M parameters. The frozen CLIP and VAE add ~120M and ~84M parameters respectively, but those don't get gradient updates — they're forward-only pretrained features.
+The DiT is small: 8 blocks × 384 hidden × 6 heads ≈ 10M parameters. The pretrained CLIP and VAE add ~120M and ~84M parameters respectively, but those don't get gradient updates — they're forward-only pretrained features.
 
 ## Sample
 
@@ -101,13 +101,13 @@ That's fine. The lab's goal is to demonstrate the *mechanism* — typing differe
 
 ## Discussion
 
-**Why frozen pretrained components.** Production training pipelines:
+**Why pretrained components.** Production training pipelines:
 
 ```
    Text encoder     SD-VAE              DiT
    ─────────────    ─────────────       ─────────────────
-   pretrained       pretrained          trained from scratch
-   FROZEN           FROZEN              on (image-latent, text-embedding) pairs
+   pretrained,      pretrained,         trained from scratch on
+   used as-is       used as-is          (image-latent, text-embedding) pairs
 ```
 
 Same setup we use here. The DiT learns to navigate the *fixed* latent space defined by SD-VAE, conditioned on the *fixed* text embedding produced by CLIP. Decoupling the modalities is what makes scale-up tractable — you don't have to retrain CLIP or the VAE every time you scale the DiT.

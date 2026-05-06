@@ -50,7 +50,7 @@ def main():
     device = get_device()
     print(f"device: {device}")
 
-    # Frozen pretrained components.
+    # Pretrained components.
     print("loading CLIP...")
     text_enc = CLIPTextEncoder().to(device)
     print("loading SD-VAE...")

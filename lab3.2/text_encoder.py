@@ -1,6 +1,6 @@
-"""Frozen CLIP text encoder for prompt embedding.
+"""Pretrained CLIP text encoder for prompt embedding.
 
-Production text-to-image models all condition on text via a frozen pretrained
+Production text-to-image models all condition on text via a pretrained
 text encoder. We use CLIP's text encoder (`openai/clip-vit-base-patch32`) — small
 enough to run on M3, well-known to the open-source ecosystem.
 
@@ -15,8 +15,8 @@ The DiT consumes two things produced here:
 This split mirrors how SD3 / FLUX consume CLIP: token-level for cross-attention,
 pooled for modulation.
 
-Frozen means: no gradient flow into CLIP, no parameter updates. The DiT learns
-to *use* CLIP's outputs; CLIP itself is treated as a fixed feature extractor.
+We use CLIP in eval mode with no gradient flow — the DiT learns to *use* CLIP's
+outputs; CLIP itself is treated as a fixed feature extractor.
 """
 
 import torch

@@ -1,4 +1,4 @@
-"""Frozen Stable Diffusion VAE for latent compression / reconstruction.
+"""Pretrained Stable Diffusion VAE for latent compression / reconstruction.
 
 Production text-to-image models (SD1.x/2.x/XL, SD3, FLUX) all use a 2D spatial
 VAE that compresses 256×256×3 images to ~32×32×4 latents — an 8× spatial
@@ -8,8 +8,9 @@ We use `stabilityai/sd-vae-ft-mse`, the canonical SD 1.x VAE. It works well at
 any resolution that's a multiple of 8; for our 64×64 images it produces 8×8×4
 latents.
 
-Frozen: the VAE was pretrained at scale on natural images. We don't update it.
-The DiT learns to navigate the latent space the VAE defines.
+The VAE was pretrained at scale on natural images. We use it as-is — no gradient
+updates during DiT training. The DiT learns to navigate the latent space the VAE
+defines.
 
 Two things to know about SD-VAE's latent scale:
     - The encoder returns a Gaussian distribution over the latent. We use its
