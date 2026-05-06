@@ -230,7 +230,7 @@ c = t_embed(t) + class_embed(y)    # (B, hidden)
 
 The DiT-specific bit is the *folding* — lab 2.2's MLP concatenated `x_emb`, `t_emb`, `c_emb` separately; DiT sums time and class into one shared `c` that then drives every block. This is what makes the conditioning trivial to extend in lab 3.2 — there `c = t_embed(t) + text_embed(prompt)` and nothing else in the architecture changes. CFG itself (label-dropout in training, `v_uncond + s·(v_cond − v_uncond)` at sampling) carries over from lab 2.2 unchanged.
 
-**The modulation parameters.** `(shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp)` are six per-block tensors of shape `(B, hidden)`, all produced from `c` by a single linear projection per block (`adaLN_modulation`). `modulate` does the per-feature affine:
+**The modulation parameters.** `(shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp)` are six per-block tensors of shape `(B, hidden)`, all produced from `c` by a single linear projection per block (`adaLN_modulation`). `modulate` does the per-feature affine (`y = A·x + b`):
 
 ```python
 def modulate(x, shift, scale):
