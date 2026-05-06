@@ -221,8 +221,6 @@ x = x + gate_msa * attn(modulate(LN(x), shift_msa, scale_msa))
 x = x + gate_mlp * mlp (modulate(LN(x), shift_mlp, scale_mlp))
 ```
 
-**Where does `c` come from?** Two components reused from lab 2.2 — sinusoidal time embedding and class embedding with a null slot for CFG — folded into one shared vector:
-
 ```python
 c = t_embed(t) + class_embed(y)    # (B, hidden)
 ```
