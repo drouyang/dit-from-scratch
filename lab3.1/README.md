@@ -251,16 +251,7 @@ self.adaLN_modulation = nn.Sequential(
 )
 ```
 
-`adaLN_modulation` decodes `c` into the six modulation parameters per block. And `c` itself is built from two pieces:
-
-```
-c = t_embed(t) + class_embed(y)
-```
-
-- **`t_embed(t)`** = `sinusoidal_time_embed(t) → Linear → SiLU → Linear` — an MLP output. (Lab 2.2's pattern.)
-- **`class_embed(y)`** = `nn.Embedding(num_classes+1, hidden)` — a learned lookup table, not an MLP. You index by class id and retrieve a learned vector.
-
-So the time half follows lab 2.2's `sinusoidal → MLP` recipe and the class half is a plain embedding; their sum drives every block.
+`adaLN_modulation` decodes `c` (defined earlier) into the six modulation parameters per block.
 
 ### 3. RoPE-2D — relative position, applied inside attention
 
