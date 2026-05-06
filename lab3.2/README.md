@@ -64,7 +64,7 @@ First run downloads three models from HuggingFace (cached at `~/.cache/huggingfa
 python train.py
 ```
 
-Defaults: 5K COCO pairs at 64×64, 20K training steps, batch size 32, ~1–2 hours on M3 MPS. Saves `model.pt`.
+Defaults: 5K COCO pairs at 64×64, 20K training steps, batch size 32, ~2–4 hours on M3 MPS. Saves `model.pt`.
 
 The DiT is small: 8 blocks × 384 hidden × 6 heads ≈ 10M parameters. The frozen CLIP and VAE add ~120M and ~84M parameters respectively, but those don't get gradient updates — they're forward-only pretrained features.
 

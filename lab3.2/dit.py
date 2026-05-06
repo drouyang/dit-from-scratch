@@ -16,7 +16,7 @@ conditioning into text conditioning:
 The block becomes:
 
     x = x + gate * self_attn(AdaLN(x, c))     ← image self-attention (lab 3.1)
-    x = x + cross_attn(AdaLN(x), text_tokens) ← NEW: image attends to text
+    x = x + cross_attn(LN(x), text_tokens)    ← NEW: image attends to text
     x = x + gate * mlp(AdaLN(x, c))           ← MLP (lab 3.1)
 
 This is the standard SD3 / FLUX / PixArt recipe at small scale.
