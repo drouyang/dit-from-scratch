@@ -221,8 +221,8 @@ x = x + gate_mlp * mlp (modulate(LN(x), shift_mlp, scale_mlp))
 c = t_embed(t) + class_embed(y)    # (B, hidden)
 ```
 
-- **`t_embed`** — sinusoidal time embedding (same helper as lab 2.2 / lab 1.1) followed by a 2-layer MLP. Output shape `(B, hidden)`.
-- **`class_embed`** — `nn.Embedding(num_classes + 1, hidden)`. The `+1` row is the **null class** for CFG label-dropout, exactly like lab 2.2's `TimeMLP`.
+- **`t_embed(t)`** = `sinusoidal_time_embed(t) → Linear → SiLU → Linear` — that part is an MLP output. (Lab 2.2's pattern.)
+- **`class_embed(y)`** = `nn.Embedding(num_classes + 1, hidden)` — just a lookup table, not an MLP. You index by class id and retrieve a learned vector. The `+1` row is the **null class** for CFG label-dropout (same trick as lab 2.2).
 
 The DiT-specific bit is the *folding* — lab 2.2's MLP concatenated `x_emb`, `t_emb`, `c_emb` separately; DiT sums time and class into one shared `c` that then drives every block. This is what makes the conditioning trivial to extend in lab 3.2 — there `c = t_embed(t) + text_embed(prompt)` and nothing else in the architecture changes. CFG itself (label-dropout in training, `v_uncond + s·(v_cond − v_uncond)` at sampling) carries over from lab 2.2 unchanged.
 
@@ -251,7 +251,7 @@ self.adaLN_modulation = nn.Sequential(
 )
 ```
 
-Lab 2.2's `sinusoidal_time_embed → MLP → t_emb` pattern shows up here in the time half of `c`; the class half is a learned embedding lookup. `adaLN_modulation` is itself a small MLP-style module (`SiLU → Linear`) that decodes `c` into modulation parameters per block. Counting MLPs / Linear stacks in DiT: one for the time embedder, one for `adaLN_modulation` per block, and the FFN inside each block — every one of them is built from the same `Linear → nonlinearity → Linear` pattern lab 1.1 introduced.
+Lab 2.2's `sinusoidal_time_embed → MLP → t_emb` pattern shows up here in the time half of `c`; the class half is a learned embedding lookup. `adaLN_modulation` is itself a small MLP-style module (`SiLU → Linear`) that decodes `c` into modulation parameters per block.
 
 ### 3. RoPE-2D — relative position, applied inside attention
 
