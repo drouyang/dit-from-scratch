@@ -1,6 +1,5 @@
 torch>=2.4
-# WanPipeline lives in diffusers main as of May 2026, not in stable releases:
-diffusers @ git+https://github.com/huggingface/diffusers.git
+diffusers>=0.36         # WanPipeline for WAN 2.1 is in stable releases
 transformers>=4.40
 accelerate>=0.27
 safetensors>=0.4

@@ -1,36 +1,98 @@
-# Module 4.3 — Distribution
+# Module 4.3 — Post-training WAN (LoRA)
 
-> Part 4 — DiT in Production · [DiT from Scratch](../README.md)
+**Goal**: take WAN-2.1 T2V-1.3B (the smallest variant of the Wan-Video team's open production text-to-video DiT family) and *post-train* it. Hands-on: LoRA fine-tune it on a tiny custom video-caption set so the model adapts to a new style or concept. Survey: read about — and understand the trade-offs of — the other major post-training flavors that don't fit on a rented single-GPU budget (full SFT, Diffusion-DPO, distillation).
 
-**Goal**: take what you trained in lab 4.2 and *publish it in three forms* each audience expects to install:
+**Why this matters for DiT**: post-training is what *every* production model goes through after the initial pretraining run. Pretraining gets you "knows how to make video"; post-training gets you "makes video the way *you* want." For a small team or solo developer, post-training is also the *only* place you have leverage — pretraining a 14B-parameter video model is a $1M+ cluster job, but a LoRA fine-tune of a 1.3B variant fits in $20 of rented H100 time. This lab teaches the cheap, ubiquitous version (LoRA) end-to-end and orients you on the rest of the landscape.
 
-1. **LoRA on the HuggingFace Hub** — developer audience; loadable in three lines of `diffusers` code.
-2. **ComfyUI custom node** — power-user / hobbyist audience; one-click install via ComfyUI Manager, becomes a graph node they can compose with everything else.
-3. **Quantized weights** — small-GPU audience; 8-bit or 4-bit variants that fit on a 12 GB consumer card instead of needing 24 GB+.
+**Why WAN**: Wan-2.1 / Wan-2.2 is the strongest open text-to-video DiT family at the time of writing (matches or beats closed Sora-class models on several benchmarks, fully open weights, supported in `diffusers`). T2V-1.3B is the smallest variant — 1.3 B parameters, fits at bf16 on a single 24 GB consumer GPU for inference and on a 40–80 GB H100 for LoRA training.
 
-**Why "distribution" not "deployment"**: distribution publishes *artifacts* so other people can run them on their own hardware. Deployment runs the model on *your* hardware behind an API. They overlap, but they're separate concerns — this lab is the first. Hosting (Modal, Replicate, fal.ai) is a real thing you might want to do; it just isn't what this lab teaches.
+## The post-training landscape
 
-**Why this matters**: a trained model nobody else can run is barely shipped. The WAN ecosystem has all three of these distribution shapes live in production — Civitai and HF for LoRA / model weights, the Comfy Registry and ComfyUI-Manager for nodes, and HF-hosted quantized variants (`-nf4`, `-int8` repos) for users with smaller GPUs. After this lab, that's where your trained LoRA lives.
-
-## What you're shipping
+Pretraining sets up the model's broad capabilities (compresses billions of (caption, video) pairs into a velocity field over latent space). Post-training adapts it. The four flavors you'll run into:
 
 ```
-lab 4.2 produced:                        lab 4.3 turns it into:
-─────────────────                        ─────────────────────────────
-runs/my-style/                  ─►       1. HF model repo with model card
-  ├── lora_step02000.safetensors          (loadable via pipe.load_lora_weights)
-  └── adapter_config.json
-                                ─►       2. ComfyUI custom node
-                                          (GitHub repo, optionally listed in
-                                           ComfyUI-Manager / Comfy Registry)
-
-Wan-2.1 base (separately):       ─►      3. NF4-quantized HF variant
-  ~2.6 GB bf16 transformer                (~0.7 GB; fits on 12 GB GPUs)
+                        what changes      base weights      typical compute
+                        per step          modified?         budget
+─────────────────       ──────────────    ───────────────   ───────────────
+LoRA fine-tune          ~10 M LoRA params  no, frozen        $10–50
+Full SFT                ~1.3 B base params yes, all          $1k–10k+
+Diffusion-DPO           ~1.3 B base params yes, all          similar to SFT
+Distillation            student model      separate student  $100–1k
 ```
 
-Each path serves a different audience and a different use shape. Most serious releases do all three.
+This lab does the first one for real and surveys the other three.
 
-## Setup
+## What LoRA actually is
+
+LoRA (Low-Rank Adaptation, Hu et al. 2021) is the dominant parameter-efficient fine-tuning method. The mechanic, in one paragraph:
+
+For every linear layer `y = W x` in the base model that you want to adapt, *don't* modify `W`. Instead, add a parallel learned correction:
+
+```
+y  =  W x  +  (α / r) · B A x
+            └── frozen ──┘  └── trainable ──┘
+
+where  W ∈ R^(d_out × d_in)   ← original weight, frozen
+       A ∈ R^(r × d_in)        ← "down" projection
+       B ∈ R^(d_out × r)        ← "up" projection
+       r  = rank, e.g. 8 or 16  ← much smaller than d_out, d_in
+       α  = scaling factor
+```
+
+`B A` is at most rank-`r`, so the correction lives on a tiny low-rank subspace. The whole adapter contributes `r · (d_in + d_out)` new parameters per linear, vs `d_in · d_out` for full fine-tuning — typically **0.1–1% of the base model's parameter count**. At bf16, a rank-16 LoRA on Wan-2.1 T2V-1.3B is ~50–150 MB; full bf16 weights are ~2.6 GB. That's the entire pitch.
+
+Why it works:
+
+1. **Empirically, fine-tuning has low intrinsic rank.** When you fully fine-tune a pretrained model on a downstream task, the weight delta `ΔW = W_finetuned − W_pretrained` turns out to be approximately low-rank — most directions of change matter, but not many. LoRA pre-commits to "use only the top r singular directions" and you lose surprisingly little quality.
+2. **Stackable / swappable.** Because the base is untouched, you can keep multiple LoRAs around (one per character, one per style, one per camera-angle preference) and merge them at inference. Civitai is essentially a marketplace of these.
+3. **Cheap to ship.** A 100 MB file vs a 2.6 GB checkpoint changes how distribution works. Authors share LoRAs the way they used to share image filters.
+
+### Where LoRAs go in WAN's transformer
+
+WAN's transformer block looks like (simplified):
+
+```
+x ─┬─► AdaLN(c) ─► attention(q,k,v,o) ─► gate(c) ─┐
+   │                                              ▼
+   └────────────────────────────────────────────► ⊕ ─┐
+                                                     ▼
+   ┌────────────────────────────────────────────► ⊕ ◄── gate(c) ◄── ffn(gate, up, down)
+   │                                              ▲
+   ▲ ─── AdaLN(c) ─────────────────────────────── ┘
+```
+
+The canonical LoRA targets (matching `LORA_TARGET_MODULES` in `train_lora.py`):
+
+- **Attention's `to_q`, `to_k`, `to_v`, `to_out.0`** — these are the routing matrices. Adapting them changes *what attends to what*. Most LoRAs concentrate here because attention dominates how the model uses spatial / temporal context.
+- **MLP's `ffn.net.0.proj` (gate+up) and `ffn.net.2` (down)** — adapting these changes the per-token nonlinear transform. Usually included for completeness.
+
+Things you don't typically wrap with LoRA:
+- LayerNorm / AdaLN — small, already very task-specific in their gain/bias.
+- VAE / text-encoder weights — frozen by design (lab 3.2 covers why).
+- The 3D RoPE frequency tables — fixed positional construction, no params.
+
+## Hands-on: train a LoRA on Wan-2.1 T2V-1.3B
+
+### Hardware
+
+The lab's defaults are sized to fit a **single 4090 (24 GB)** at 256 × 256 × 17 frames with gradient checkpointing. Scale up if you have more compute.
+
+| GPU | What fits | Wall clock @ 2000 steps |
+|---|---|---|
+| **1× 4090 24 GB** (lab default) | 256×256 × 17 frames, batch 1, grad-accum 8, gradient checkpointing **on** | ~6–8 hours |
+| **4× 4090 24 GB** (DDP) | same per-GPU config; effective batch = 32 | ~1.5–2 hours |
+| A100 40 GB | 384×384 × 17 frames, batch 1, grad-accum 8 | ~3–4 hours |
+| A100 80 GB | 480p × 25 frames, batch 1, grad-accum 4, can drop gradient-checkpointing | ~2–3 hours |
+| H100 80 GB | 480p × 33 frames, batch 1, grad-accum 4, can drop gradient-checkpointing | ~1.5–2.5 hours |
+| MacBook M3 | inference only — *don't* try to LoRA-train a 1.3B video DiT on MPS | — |
+
+**Default config rationale.** 17 = 4·4 + 1 lines up with Wan-VAE's 4× temporal compression (it expects an "anchor frame" plus multiples of 4). 256×256 lines up with WAN's 8× spatial compression. Gradient checkpointing trades a ~30% wall-clock hit for the activation memory needed to fit the 24GB budget.
+
+**Going multi-GPU.** `accelerate launch` automatically uses every visible GPU via DDP — no code change needed. On 4× 4090, you'll see effective batch size = `1 (batch) × 8 (grad-accum) × 4 (GPUs) = 32`. Wall-clock divides almost linearly.
+
+**Easiest path**: rent a single 4090 from Vast / RunPod (~$0.40–0.80/hr) for an overnight run, or 4× 4090 / 1× H100 if you want sub-2-hour iteration.
+
+### Setup
 
 ```bash
 cd lab4.3/
@@ -38,237 +100,181 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Path 1 needs a HuggingFace write token (`huggingface-cli login`). Path 2 has no special prereqs — you'll be writing code, not running it. Path 3 needs a CUDA GPU (`bitsandbytes` doesn't support MPS or CPU); skip it on Mac and run from a rented GPU.
+First run will download Wan-2.1 T2V-1.3B from HuggingFace (~5 GB total: VAE + text encoder + transformer). The repo is public — no auth required.
 
-## Path 1 — Publish your LoRA on HuggingFace Hub
+### Prepare your data
 
-Goal: any developer should be able to load your LoRA in three lines:
+Pick a *concept* you want WAN to learn. Common LoRA targets:
 
-```python
-from diffusers import WanPipeline
-pipe = WanPipeline.from_pretrained("Wan-AI/Wan2.1-T2V-1.3B-Diffusers", ...).to("cuda")
-pipe.load_lora_weights("your-username/wan-mystyle-lora")
+- **Style** — *"in the style of Studio Ghibli"*, *"watercolor anime"*, *"vintage 8mm film"*. Train on 30–80 clips that share the visual style.
+- **Character** — a specific person, animal, or fictional creature. Train on 20–50 clips of them in different poses / scenes.
+- **Camera technique** — *"slow dolly zoom"*, *"first-person motorcycle riding"*. Train on clips that demonstrate the camera move.
+
+Layout:
+
+```
+data/
+├── captions.json       # [{"video": "clips/cat_01.mp4", "caption": "..."}, ...]
+└── clips/
+    ├── cat_01.mp4
+    ├── cat_02.mp4
+    └── ...             # 20–100 short clips, ~2–5 seconds each
 ```
 
-For that to work, your LoRA needs to live on HuggingFace with the right files at the repo root (`adapter_config.json` + the `.safetensors`) and a model card that documents the trigger word, recommended scale, and base model.
+Captions matter a lot. Write them in WAN's preferred caption style — descriptive, including subject + action + environment + style. Example: *"an orange tabby cat lounges on a brown leather sofa, golden afternoon light streaming through a window, cinematic shallow depth of field"*. If your dataset is style-focused, include the style name as a *trigger word* the user will type at sample time (e.g., *"in mystyle, an orange tabby cat ..."*).
 
-### Steps
+### Train
 
 ```bash
-huggingface-cli login          # paste a write token from https://huggingface.co/settings/tokens
+accelerate launch train_lora.py \
+    --data-root data/ \
+    --output-dir runs/my-style/ \
+    --rank 16 \
+    --steps 2000
 ```
 
-Upload from Python (`peft` already wrote both required files during training in lab 4.2):
+Hyperparameters worth understanding before you tune them:
 
-```python
-from huggingface_hub import HfApi
-api = HfApi()
-api.create_repo("your-username/wan-mystyle-lora", repo_type="model", exist_ok=True)
-api.upload_folder(
-    folder_path="../lab4.2/runs/my-style/",     # contains .safetensors + adapter_config.json
-    repo_id="your-username/wan-mystyle-lora",
-    repo_type="model",
-)
-```
-
-### The model card
-
-A `README.md` at the repo root *is* the model card — HF parses YAML frontmatter for discovery and renders the body. Minimal version:
-
-```markdown
----
-base_model: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
-tags:
-  - text-to-video
-  - lora
-  - wan
-  - diffusers
-license: apache-2.0
----
-
-# WAN 2.1 — "mystyle" LoRA
-
-Style LoRA fine-tuned on 50 short clips of [your domain].
-**Trigger word:** `mystyle`. Recommended scale 0.8–1.2.
-
-## Usage
-
-\`\`\`python
-import torch
-from diffusers import WanPipeline
-
-pipe = WanPipeline.from_pretrained(
-    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", torch_dtype=torch.bfloat16,
-).to("cuda")
-pipe.load_lora_weights("your-username/wan-mystyle-lora")
-
-video = pipe(prompt="in mystyle, a cat on a sofa", num_frames=33).frames[0]
-\`\`\`
-
-## Training
-
-- **Base**: `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`
-- **Rank**: 16, **alpha**: 16
-- **Steps**: 2000, **lr**: 1e-4
-- **Hardware**: 1× H100 80 GB
-- **Dataset**: 50 clips, 480p × 33 frames
-```
-
-The `tags` drive HF's discovery filters; `text-to-video` + `lora` + `wan` is the canonical set. The `base_model` field cross-references your LoRA against the WAN base card so the relationship shows up on both pages.
-
-### Optional mirror: Civitai
-
-Civitai is the de facto LoRA marketplace for the SD/FLUX/WAN community. The upload UI is web-only (no CLI), the model card format is similar but adds preview images and trigger-word fields. Mirroring isn't required, but it's where most hobbyist users discover LoRAs — worth doing if reach matters.
-
-## Path 2 — Ship a ComfyUI custom node
-
-Goal: a hobbyist can find your node in ComfyUI-Manager, click install, and it appears in their node graph as a single drop-in box.
-
-### Custom node vs workflow JSON
-
-Two things sometimes confused: a **workflow JSON** is a *graph spec* a user drops onto their ComfyUI canvas to recreate a particular node arrangement (no new code; just connections between existing nodes). A **custom node** is *code* — Python that runs inside ComfyUI and exposes new graph operations. This lab ships a custom node because:
-
-- Your trained LoRA pairs with specific defaults (recommended CFG range, trigger words). Baking those into a node gives users a one-click experience.
-- A node is the canonical packaging unit. The Comfy Registry, ComfyUI-Manager, and most installation paths are built around node packages, not workflow JSON.
-- Workflow JSON depends on whatever community wrappers happen to be installed (`comfyui-wanwrapper` etc.); a custom node has explicit `requirements.txt` and runs even on a barebones ComfyUI.
-
-### What's in `comfy_node/`
-
-Look at the `comfy_node/` subdirectory — it's a complete, installable custom node:
-
-```
-comfy_node/
-├── __init__.py           # exports NODE_CLASS_MAPPINGS / NODE_DISPLAY_NAME_MAPPINGS
-├── nodes.py              # WanLoraSampler — the actual node implementation
-├── pyproject.toml        # manifest for Comfy Registry (registry.comfy.org)
-├── requirements.txt      # pip deps the user installs after cloning
-└── README.md             # what users see on GitHub
-```
-
-The two ComfyUI-mandated exports in `__init__.py`:
-
-```python
-NODE_CLASS_MAPPINGS         = {"WanLoraSampler": WanLoraSampler}    # registers the class
-NODE_DISPLAY_NAME_MAPPINGS  = {"WanLoraSampler": "WAN LoRA Sampler"} # what shows in the UI
-```
-
-A node class needs four class-level attributes that ComfyUI reads via reflection:
-
-| Attribute | What it does |
-|---|---|
-| `INPUT_TYPES` (classmethod) | Returns a `{"required"/"optional": {name: type_spec}}` dict. ComfyUI generates the right widget per type — `"STRING"` becomes a textbox, `"INT"` a slider, etc. |
-| `RETURN_TYPES` | Tuple of output types. We return `("IMAGE",)` — a frame batch ComfyUI knows how to wire into video savers, upscalers, etc. |
-| `FUNCTION` | Name of the method ComfyUI calls per execution. Must match a method on the class. |
-| `CATEGORY` | Where in the node-tree menu users find this node. We use `"WAN"`. |
-
-Read `comfy_node/nodes.py` — at ~80 lines it's the whole node, including model caching, optional LoRA application, and the conversion from `diffusers`' PIL output to ComfyUI's `(T, H, W, 3)` float32 IMAGE tensor.
-
-### Distribution channels
-
-Three tiers, in increasing formality:
-
-1. **Just push to GitHub.** Anyone with ComfyUI clones your repo into `ComfyUI/custom_nodes/`, runs `pip install -r requirements.txt`, restarts. Done. This is how `kijai/ComfyUI-WanVideoWrapper` (the most popular community WAN wrapper) is distributed.
-2. **List in ComfyUI-Manager.** Submit a PR to [`ltdrdata/ComfyUI-Manager`](https://github.com/ltdrdata/ComfyUI-Manager) adding your node to `custom-node-list.json`. Now users can install it via in-app search instead of `git clone`.
-3. **Publish to the Comfy Registry.** [`registry.comfy.org`](https://registry.comfy.org) is the official versioned registry. Run `comfy-cli publish` (after `pip install comfy-cli`); your `pyproject.toml`'s `[tool.comfy]` section is the registration metadata.
-
-Most node authors do (1), then (2) once it's stable; only some bother with (3). For a lab artifact, (1) is enough.
-
-## Path 3 — Distribute quantized weights
-
-Goal: users with smaller GPUs (12–16 GB consumer cards instead of 24 GB+) can run your model at all.
-
-### Why bother
-
-Quantization compresses transformer weights from bf16 (2 bytes/param) to int8 (1 byte) or NF4 (~0.5 byte):
-
-| Format | Size (Wan-1.3B) | Where it fits |
+| Knob | Default | What it controls |
 |---|---|---|
-| bf16 (baseline) | ~2.6 GB | 24 GB+ GPU |
-| int8 | ~1.3 GB | 16 GB GPU comfortably |
-| NF4 (4-bit) | ~0.7 GB | 12 GB consumer GPU |
+| `--rank` | 16 | Capacity of the adapter. Higher = more parameters = can capture richer behavior, but slower to train and more prone to overfitting. Standard range: 4 (subtle), 16 (default), 64 (heavy). |
+| `--alpha` | 16 | Scaling factor; effective contribution = `α/r`. Setting `alpha == rank` keeps the scale at 1.0. Some authors use `alpha = 2*rank` for more aggressive adaptation. |
+| `--lr` | 1e-4 | Learning rate for the LoRA params. ~10× higher than what you'd use for full fine-tuning (LoRA params are randomly initialized and small). |
+| `--steps` | 2000 | Total optimization steps. Style LoRAs converge in 1k–3k; character LoRAs need 2k–5k. Watch the loss curve — usually plateaus before overfitting kicks in. |
+| `--n-frames`, `--height`, `--width` | 17, 256, 256 | Per-clip dimensions. Sized for 4090; raise on bigger GPUs (see the Hardware table). Lower spatial resolution hurts quality more than fewer frames; if you have headroom, prefer raising `--height` / `--width` over `--n-frames`. |
+| `--gradient-checkpointing` | on | Trades ~30% wall clock for activation memory; required to fit a 4090. Pass `--no-gradient-checkpointing` to disable on H100 / A100. |
+| `--grad-accum` | 8 | Effective batch size = `batch_size * grad_accum * num_gpus`. On 1× 4090 that's 8; on 4× 4090 that's 32. Higher = smoother gradient but more wall-clock. |
 
-The trade-off is a small quality drop and a measurable inference *slowdown* on some GPUs (int8/NF4 matmuls aren't universally faster than bf16 — they're better on memory-bound layers, often worse on TFLOPS-bound ones). What you're buying is *fit*: 4090 / 4070 / 3060 owners can run your model at all instead of OOMing on load.
+You'll see logs like:
 
-### How
+```
+trainable params: 5.74M  (0.44% of 1.30B base)
+step     1  loss 0.4218
+step    50  loss 0.3104
+step   100  loss 0.2812
+...
+step  2000  loss 0.1954
+saved runs/my-style/lora_step02000.safetensors  (288 tensors, 138.6 MB at bf16)
+```
 
-`quantize.py` produces an NF4 or int8 variant of WAN's transformer using `diffusers`' `BitsAndBytesConfig` (which calls into `bitsandbytes` under the hood). Run it on a CUDA GPU:
+The loss number is meaningless in absolute terms (depends on your data's velocity magnitudes); what matters is that it's monotonically decreasing.
+
+### Sample
+
+After training, generate side-by-side with the base model to actually see what your LoRA learned:
 
 ```bash
-python quantize.py --quant nf4 \
-                   --output Wan2.1-T2V-1.3B-NF4 \
-                   --push-to-hub your-username/wan-2.1-1.3b-nf4
+# With your trained LoRA:
+python sample_lora.py \
+    --prompt "in mystyle, an orange tabby cat on a sofa" \
+    --lora runs/my-style/lora_step02000.safetensors \
+    --out my_lora.mp4
+
+# Base WAN, same prompt and seed:
+python sample_lora.py \
+    --prompt "in mystyle, an orange tabby cat on a sofa" \
+    --out base.mp4
 ```
 
-It loads the bf16 transformer, quantizes during load, saves the quantized weights, and optionally pushes to HF as a separate model variant. Users then load:
+`--lora-scale` is your most useful knob at sample time — it multiplies the LoRA's contribution. Try `0.0` (== base), `0.5` (subtle), `1.0` (trained), `1.5` (exaggerated). Different LoRAs have different sweet spots.
 
-```python
-import torch
-from diffusers import WanPipeline, WanTransformer3DModel, BitsAndBytesConfig
+### What to expect
 
-quant_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                                   bnb_4bit_compute_dtype=torch.bfloat16)
-transformer = WanTransformer3DModel.from_pretrained(
-    "your-username/wan-2.1-1.3b-nf4", quantization_config=quant_config,
-    torch_dtype=torch.bfloat16,
-)
-pipe = WanPipeline.from_pretrained(
-    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-    transformer=transformer, torch_dtype=torch.bfloat16,
-).to("cuda")
-pipe.load_lora_weights("your-username/wan-mystyle-lora")    # your LoRA composes cleanly
+- **Style LoRAs converge fastest.** A coherent visual style across 30 clips, 1500 steps, rank 8–16 — usually visible after the first checkpoint.
+- **Character LoRAs are harder.** Identity-preservation across poses requires more clips and higher rank. Common failure mode: the model picks up the *outfit* the character was wearing in your clips and renders that on everything.
+- **Loss going down ≠ outputs improving.** Eyeball the samples every few hundred steps. If they stop changing or start drifting, you've converged or overfit.
+- **The base was trained on hundreds of millions of clips; you have 50.** Your LoRA can *bend* the model's behavior, not retrain it. Don't expect it to learn truly new concepts (a Pokemon WAN has never seen) from a tiny dataset.
+
+## Survey: the post-training methods we *don't* run
+
+LoRA is post-training-on-a-budget. Here's what the rest of the field looks like, and when you'd reach for it.
+
+### Full supervised fine-tuning (SFT)
+
+Same loss as LoRA training (flow-matching MSE on velocity), but **all** base parameters are unfrozen and updated.
+
+```
+                  LoRA fine-tune        Full SFT
+                  ─────────────         ─────────
+trainable params  ~5–20 M               ~1.3 B (Wan-1.3B)
+                                        ~14 B (Wan-2.2 A14B)
+optimizer state   small                 enormous (3× param size for AdamW)
+hardware          1× H100 80 GB         8× H100 with FSDP, or larger
+artifact size     50–200 MB             5+ GB per checkpoint
+typical use       style / character     production model variants
+                  / fan ports           ("WAN-anime", "WAN-realistic")
 ```
 
-Note that **only the transformer is quantized** in this recipe. The VAE and text encoder stay in bf16 — they're already small (~84 M and ~120 M for Wan-2.1's umT5-XXL) and matter less than the transformer for VRAM.
+Why production models do full SFT instead of LoRA: the rank-`r` constraint ultimately caps how much the base can change. For a major capability shift (re-aiming the model at a different domain, or substantially upgrading quality), you need the full parameter space. Stability-AI's various SD3 variants, Black-Forest-Labs's FLUX-dev → FLUX-pro, Wan-Lightning all involve full SFT on top of pretrained checkpoints.
 
-### What about other quantization libraries?
+The diffusers reference is `diffusers/examples/text_to_video/train_text_to_video_lora.py` (LoRA) and `train_text_to_video.py` (full SFT) — same code shape, just `unet.requires_grad_(False)` becomes `unet.requires_grad_(True)`.
 
-- **`torchao`** (PyTorch's official quant lib) — newer, native integration with `torch.compile`, but `diffusers` integration is less mature than `bitsandbytes`.
-- **`optimum-quanto`** — HF's quantization wrapper; broader hardware support including Apple Silicon.
-- **GGUF** — common in the LLM world (`llama.cpp`); some community tools convert diffusion checkpoints, but the WAN ecosystem doesn't standardize on it.
+### Diffusion-DPO (preference optimization)
 
-For *distributing on HF and pairing with diffusers + LoRA*, `bitsandbytes` via `BitsAndBytesConfig` is the path of least resistance.
+LLMs use RLHF / DPO to align outputs with human preferences. **Diffusion-DPO** (Wallace et al. 2023) is the diffusion-model adaptation. The training data shape is different: instead of (caption, video) pairs, you have *triplets* (caption, video_winner, video_loser) — typically generated by the model itself, then ranked by humans or a reward model.
+
+The DPO loss replaces the per-step MSE with a comparative term: increase the model's likelihood of the winning video relative to the losing one. The key intuition is that you don't need a reward model that scores absolute quality — relative preferences are easier to label and learn from.
+
+When to reach for it: when SFT has plateaued and you want to push the model toward subjective qualities ("this video is more cinematic", "this one looks less AI-generated") that aren't easily captured by a per-frame reconstruction loss. Used by some closed video labs (Sora variants, Runway) and showing up in open work (HunyuanVideo-DPO).
+
+References: [Diffusion-DPO paper](https://arxiv.org/abs/2311.12908), and `diffusers`' `diffusion-dpo/` example training scripts.
+
+### Distillation
+
+Take a slow-but-good "teacher" model and train a fast-but-comparable "student" to imitate it. For diffusion specifically, the most common form is *step-distillation*: the student learns to do in 4–8 sampling steps what the teacher does in 30–50.
+
+Two famous recipes:
+
+- **Latent Consistency Models (LCM)**: train the student to map any noisy `x_t` directly to its consistency-model output, so a single forward pass approximates a long ODE integration.
+- **Lightning** (SDXL-Lightning, Wan-Lightning): adversarial + identity loss to compress the sampling chain. Wan-2.2-Lightning is the official 4-step Wan variant.
+
+When to reach for it: inference cost. If your model is great at 30 steps but you need real-time generation, distillation is how you get there without dropping quality off a cliff. Distilled models still go through LoRA or SFT on top, sometimes; the techniques compose.
+
+References: [LCM paper](https://arxiv.org/abs/2310.04378), [SDXL-Lightning](https://huggingface.co/ByteDance/SDXL-Lightning), [Wan-2.2-Lightning](https://huggingface.co/lightx2v/Wan2.2-Lightning).
+
+### Continued pretraining
+
+Re-run *pretraining-style* training (huge data, low learning rate, full parameters) on a domain-specific corpus to shift the model's distribution before any task-specific fine-tune. Most people don't have the data or compute for this.
 
 ## Files
 
 | File | What it is |
 | --- | --- |
-| `quantize.py` | CLI that loads Wan-2.1's transformer with `BitsAndBytesConfig`, saves an NF4/int8 variant, optionally pushes to HF Hub. |
-| `comfy_node/` | Self-contained ComfyUI custom node — drop-in `WanLoraSampler` node that wraps WAN-2.1 + an optional LoRA from a HF repo or local path. Ready to clone into `ComfyUI/custom_nodes/`. |
-| `comfy_node/__init__.py` | Exports the two `NODE_*_MAPPINGS` dicts ComfyUI reads on startup. |
-| `comfy_node/nodes.py` | `WanLoraSampler` class — INPUT_TYPES, RETURN_TYPES, the `generate` method. ~80 lines. |
-| `comfy_node/pyproject.toml` | Manifest for the Comfy Registry (`registry.comfy.org`). |
-| `requirements.txt` | `huggingface_hub` (Path 1), `peft`/`diffusers` (already needed elsewhere), `bitsandbytes` (Path 3, CUDA-only). |
+| `data.py` | `VideoCaptionDataset` — reads `captions.json` + `.mp4` clips, decodes with `decord`, normalizes to `[-1, 1]`. |
+| `train_lora.py` | LoRA training loop. Loads Wan-2.1 T2V-1.3B, applies a `peft` LoRA config, trains only the adapter weights with flow-matching MSE. |
+| `sample_lora.py` | Inference CLI. Loads WAN base, optionally applies a trained LoRA, generates an `.mp4`. |
+| `requirements.txt` | `diffusers`, `peft`, `accelerate`, `transformers`, `decord`, `safetensors`. |
 
 ## Discussion
 
-### What you've actually shipped
-
-After this lab and 4.2, the chain is:
+### When to use which post-training
 
 ```
-1. trained a LoRA on a custom dataset                      (lab 4.2)
-2. published it on HF with a model card                    (Path 1)
-3. wrote and shipped a ComfyUI custom node that uses it    (Path 2)
-4. published a quantized variant for small-GPU users       (Path 3)
+Goal                            Reach for
+────────────────────            ──────────────────────
+add a style / character         LoRA  (this lab)
+fix a model behavior            LoRA  (often) or full SFT
+ship a production variant       full SFT
+make the model fast             distillation
+align with subjective taste     Diffusion-DPO
+domain-shift the model          continued pretraining
 ```
 
-Each path doubles the addressable audience: HF reaches developers, ComfyUI reaches hobbyists, the NF4 variant reaches the long tail of consumer-GPU users. None of the three are technically novel; the *combination* is what a small-team production launch in 2026 looks like.
+LoRA covers more of the practical "I want to ship something" cases than its parameter budget would suggest. The rest are reached for when LoRA's capacity ceiling is the bottleneck.
 
-### Cost
+### What changes vs lab 3.2
 
-| Stage | What you paid |
-|---|---|
-| Lab 4.2: 2000-step LoRA train | $10–20 (rented H100, 3–4 hours) |
-| Path 1: HF upload | $0 |
-| Path 2: ComfyUI custom node | $0 (laptop work) |
-| Path 3: quantization | a few dollars (one rented GPU run, ~10 minutes) |
+Architecturally, almost nothing — WAN is a DiT, the loss is flow matching, the conditioning is text via cross-attention plus AdaLN-Zero modulation. The pieces you built up to lab 3.2 all map directly onto blocks inside WAN.
 
-End-to-end this curriculum: pretraining is $1M+ and out of reach; **LoRA + distribution is sub-$30 and absolutely reachable.** That's the whole point of Part 4.
+What's new is *practical*:
+
+- **Production codebases are big.** `diffusers`' Wan implementation is thousands of lines. You don't read all of it; you read the bits that matter (the transformer block, the pipeline forward, the loss).
+- **Hyperparameter culture.** rank, alpha, learning rate, target modules — there's a community norm for each, and you mostly want to follow it before innovating.
+- **Distribution is the second half.** Training a LoRA is half the work; making it usable for someone else (uploading the adapter, providing trigger words, packaging it into a ComfyUI custom node) is the other half. That's lab 4.4.
 
 ### Where to go deeper
 
-- [HuggingFace `peft` LoRA loading conventions](https://huggingface.co/docs/peft/conceptual_guides/lora) — multi-adapter merging, `set_adapters([scale1, scale2, ...])`, hub integration nuances.
-- [ComfyUI custom-node docs](https://docs.comfy.org/custom-nodes/overview) — full `INPUT_TYPES` spec, hidden inputs (`UNIQUE_ID`, `PROMPT`), node validation, lazy evaluation.
-- [`comfy-cli` and the Comfy Registry](https://github.com/Comfy-Org/comfy-cli) — official versioned-publishing path.
-- [`diffusers` quantization guide](https://huggingface.co/docs/diffusers/quantization/overview) — current status of `bitsandbytes`, `torchao`, `optimum-quanto` integrations and which models support which.
-- [`bitsandbytes` README](https://github.com/bitsandbytes-foundation/bitsandbytes) — NF4 vs int8 trade-offs, CUDA version requirements, multi-GPU caveats.
+- [LoRA paper (Hu et al. 2021)](https://arxiv.org/abs/2106.09685) — the original. Sections 4.1 and 4.2 establish the low-intrinsic-rank claim empirically; the rest is application to GPT-3.
+- [`peft` library docs](https://huggingface.co/docs/peft) — beyond LoRA: prefix tuning, IA³, AdaLoRA. Same wrapping pattern, different parametric form.
+- [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) — the official training and inference repo. Their `train.py` is a good reference for production-grade training infrastructure (FSDP, DeepSpeed configs, multi-resolution training).
+- [`musubi-tuner`](https://github.com/kohya-ss/musubi-tuner) — the de facto community LoRA trainer for WAN / Hunyuan video models. More features than this lab's `train_lora.py`, more knobs, more complex.

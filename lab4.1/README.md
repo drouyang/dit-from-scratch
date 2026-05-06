@@ -1,24 +1,26 @@
-# Module 4.1 — WAN 2.2 inference + code tour
+# Module 4.1 — WAN 2.1 inference + code tour
 
-**Goal**: load **WAN 2.2 TI2V-5B**, generate a 5-second video from a text prompt, and trace every component of the running system back to a lab from Parts 1–3. By the end you can open `Wan-Video/Wan2.2`'s source and recognize patchify, AdaLN-Zero, RoPE, cross-attention, flow matching, CFG — exactly the building blocks you wrote yourself, just extended to one more dimension.
+**Goal**: load **WAN 2.1 T2V-1.3B**, generate a 3-second video from a text prompt, and trace every component of the running system back to a lab from Parts 1–3. By the end you can open `Wan-Video/Wan2.1`'s source and recognize patchify, AdaLN-Zero, RoPE, cross-attention, flow matching, CFG — exactly the building blocks you wrote yourself, just extended to one more dimension.
 
 ## Compute reality
 
-This is the first lab where M3 isn't the primary target. WAN 2.2 TI2V-5B is a 5B-param video DiT and the validated paths all need a **4090 or better**.
+WAN 2.1 T2V-1.3B is the smallest official WAN checkpoint (~1.3B params); inference fits comfortably on a 4090 (24 GB) and even tighter consumer GPUs.
 
 | Path | Hardware | Notes |
 |---|---|---|
-| **diffusers `WanPipeline`** | 4090 or better (~24GB VRAM) | Cleanest API; recommended for the code tour |
-| **Official `Wan-Video/Wan2.2`** | 4090 or better, with `--offload_model --t5_cpu` | Production codebase; what the call-path tour points into |
+| **diffusers `WanPipeline`** | 12 GB+ VRAM (4090, 4080, 3090, A10) | Cleanest API; recommended for the code tour |
+| **Official `Wan-Video/Wan2.1`** | 12 GB+ VRAM | Production codebase; what the call-path tour points into |
 
-For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 (or better) for an hour.
+For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 (or any consumer GPU with 12+ GB) for ~10 minutes.
+
+> **Why WAN 2.1 over WAN 2.2 in this lab.** WAN 2.2 ships in two flavors — TI2V-5B (5B dense) and A14B (27B-total / 14B-activated MoE). The 5B model needs ~24 GB VRAM with offload, A14B needs B200/H200-class GPUs, and `WanPipeline` for 2.2 only lives in `diffusers` from-source as of mid-2026. The 1.3B WAN 2.1 fits a 4090 cleanly, is in stable diffusers (≥0.36), and uses the **same call path** as 2.2 (the official repos share `wan/modules/{model,t5,vae}.py` structurally). Once you understand 2.1's flow, scaling up to 2.2 / A14B is a model-id swap plus a bigger GPU budget — covered in the lab-vs-production table in lab 3.2.
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `inference_diffusers.py` | Thin wrapper around diffusers' `WanPipeline` — text prompt → mp4. ~50 lines. |
-| `requirements.txt` | `torch`, `diffusers` (from source), `accelerate`, `transformers`, `imageio[ffmpeg]` |
+| `requirements.txt` | `torch`, `diffusers>=0.36` (stable), `accelerate`, `transformers`, `imageio[ffmpeg]` |
 
 ## Setup
 
@@ -29,15 +31,15 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-`requirements.txt` pulls diffusers from main because `WanPipeline` isn't in any stable release yet. First inference run downloads the TI2V-5B checkpoint (~10GB) into the HF cache.
+`WanPipeline` for the WAN 2.1 family is in stable diffusers — no from-source install needed. First inference run downloads the T2V-1.3B checkpoint (~5 GB total: VAE + umT5 + transformer) into the HF cache.
 
-### Official Wan2.2 path (recommended for understanding production code)
+### Official Wan2.1 path (recommended for understanding production code)
 
 ```bash
-git clone https://github.com/Wan-Video/Wan2.2.git
-cd Wan2.2
+git clone https://github.com/Wan-Video/Wan2.1.git
+cd Wan2.1
 pip install -r requirements.txt
-huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
+huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir ./Wan2.1-T2V-1.3B
 ```
 
 ## Run inference
@@ -48,29 +50,28 @@ huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --local-dir ./Wan2.2-TI2V-5B
 python inference_diffusers.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 ```
 
-Output: `out.mp4` — 121 frames at 1280×704, 24 fps (≈5 seconds). Generation takes ~9 minutes on a 4090.
+Output: `out.mp4` — 49 frames at 832×480, 16 fps (≈3 seconds). Generation takes ~3–5 minutes on a 4090 at default settings.
 
 ### Path B: official repo
 
 ```bash
-cd Wan2.2
-python generate.py --task ti2v-5B --size 1280*704 \
-    --ckpt_dir ./Wan2.2-TI2V-5B \
-    --offload_model True --convert_model_dtype --t5_cpu \
+cd Wan2.1
+python generate.py --task t2v-1.3B --size 832*480 \
+    --ckpt_dir ./Wan2.1-T2V-1.3B \
     --prompt "a fluffy red panda eating bamboo on a tree branch"
 ```
 
-The flags: `--offload_model True` spills the model to CPU when not in active use; `--t5_cpu` keeps the umT5-XXL text encoder on CPU (~11B params); `--convert_model_dtype` casts weights to the target dtype. These bring the GPU footprint to ~24GB.
+T2V-1.3B doesn't need the `--offload_model` / `--t5_cpu` flags that the bigger WAN 2.2 variants require — it just fits.
 
 ## Concept-organized code tour
 
-The lab's main deliverable. Every production component → call path → file:function in `Wan-Video/Wan2.2`, with which lab introduced it.
+The lab's main deliverable. Every production component → call path → file:function in `Wan-Video/Wan2.1`, mapped to which lab introduced it.
 
 ### Entry call path
 
 ```
-generate.py  (--task ti2v-5B)
-   └─► wan/textimage2video.py :: WanTI2V.generate()
+generate.py  (--task t2v-1.3B)
+   └─► wan/text2video.py :: WanT2V.generate()
           ├─► wan/modules/t5.py :: T5EncoderModel(...)              ← text encoding
           │      (tokenizer in wan/modules/tokenizers.py)
           ├─► torch.randn(...)                                       ← initial latent z_T
@@ -80,7 +81,7 @@ generate.py  (--task ti2v-5B)
           │             │      ├─► WanSelfAttention + RoPE-3D         ← image self-attn
           │             │      └─► WanCrossAttention                  ← attends to text
           │             └─► (returns predicted velocity)
-          └─► wan/modules/vae2_2.py :: Wan2_2_VAE.decode(z_0)        ← video output
+          └─► wan/modules/vae.py :: WanVAE.decode(z_0)               ← video output
 ```
 
 This is structurally identical to lab 3.2's `sample.py`. Only the modalities, resolutions, and parameter counts changed.
@@ -95,11 +96,11 @@ This is structurally identical to lab 3.2's `sample.py`. Only the modalities, re
 | `rope_params()`, `rope_apply()` | `wan/modules/model.py` | lab 3.1 (`rope_freqs`, `apply_rope`) | Same rotation-by-position trick | 3 frequency bands (t, h, w), concatenated |
 | 3D patchify | `wan/modules/model.py` | lab 3.1 (Conv2d patchify) | Conv-based tokenization | `Conv3d` with patch shape `(p_t, p_h, p_w)` |
 | `unpatchify()` | `wan/modules/model.py` | lab 3.1 (`unpatchify`) | Reverse of patchify | 3D rearrangement |
-| `Wan2_2_VAE.encode/decode` | `wan/modules/vae2_2.py` | lab 3.2 (SD-VAE) | Latent diffusion: encode pixels → latent | 3D causal: compresses time + space; latent shape `(C, T, H, W)` |
+| `WanVAE.encode/decode` | `wan/modules/vae.py` | lab 3.2 (SD-VAE) | Latent diffusion: encode pixels → latent | 3D causal: compresses time + space; latent shape `(C, T, H, W)` |
 | `T5EncoderModel` | `wan/modules/t5.py` | lab 3.2 (CLIP text encoder) | Pretrained, frozen, returns per-token features | umT5-XXL is ~100× larger; richer language understanding |
-| `FlowUniPCMultistepScheduler` | imported into `textimage2video.py` | lab 2.2 (Euler ODE) | Flow-matching sampler | Higher-order multi-step solver, fewer steps for the same quality |
+| `FlowUniPCMultistepScheduler` | imported into `text2video.py` | lab 2.2 (Euler ODE) | Flow-matching sampler | Higher-order multi-step solver, fewer steps for the same quality |
 | AdaLN-Zero modulation | `wan/modules/model.py` | lab 3.1 (`adaLN_modulation`) | `c → SiLU → Linear` decoded into shift/scale/gate per block | Identical mechanism |
-| CFG | `wan/textimage2video.py` | lab 2.2 / 3.2 | `v_uncond + s · (v_cond − v_uncond)` | Identical formula |
+| CFG | `wan/text2video.py` | lab 2.2 / 3.2 | `v_uncond + s · (v_cond − v_uncond)` | Identical formula |
 
 If everything in this table maps cleanly back to a lab, you have a complete mental model of WAN. The remaining "new" stuff is purely dimensional extensions, documented in the parent README's *From image to video — what changes architecturally* section.
 
@@ -107,7 +108,7 @@ If everything in this table maps cleanly back to a lab, you have a complete ment
 
 Three things are *not* in lab 3.2:
 
-1. **3D causal VAE** (`Wan2_2_VAE`) — encodes a sequence of frames into a `(C, T, H, W)` latent, with causal masking in time so later frames don't peek at earlier ones during reconstruction. Lab 3.2's SD-VAE was 2D image-only.
+1. **3D causal VAE** (`WanVAE`) — encodes a sequence of frames into a `(C, T, H, W)` latent, with causal masking in time so later frames don't peek at earlier ones during reconstruction. Lab 3.2's SD-VAE was 2D image-only.
 2. **3D patchify** — tokenize across time as well as space; patch shape `(p_t, p_h, p_w)` produces tokens of dimension `p_t · p_h · p_w · C`. The implementation is just `Conv3d` instead of `Conv2d`.
 3. **3D RoPE** — three frequency bands, one per axis (t, h, w). Construction is the same as lab 3.1's 2D RoPE, just with one more direction; rotated halves are concatenated.
 
@@ -118,7 +119,7 @@ DiT block, AdaLN-Zero, cross-attention, flow matching, CFG — all unchanged fro
 After reading the tour:
 
 - [ ] Open `wan/modules/model.py` and find `WanAttentionBlock`. Confirm you can map every line of its forward pass to either lab 3.1 (self-attn / AdaLN / MLP) or lab 3.2 (cross-attn).
-- [ ] Open `wan/modules/vae2_2.py` and identify the `Conv3d` layers — that's the 3D causal extension over SD-VAE's 2D `Conv2d`.
+- [ ] Open `wan/modules/vae.py` and identify the `Conv3d` layers — that's the 3D causal extension over SD-VAE's 2D `Conv2d`.
 - [ ] Find `rope_apply()` and confirm three concatenated rotation bands. Compare against lab 3.1's `apply_rope()` (which has two: row + column).
 
 If you can do these three things, you've completed the lab.

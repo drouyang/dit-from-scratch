@@ -43,16 +43,19 @@ Put it together.
 
 3.1 builds and verifies the DiT architecture on raw pixels with class labels. 3.2 is the synthesis: same DiT, but operating on VAE latents and conditioned on text — the full production stack at small scale. At this point you've built every component of a modern image DiT from scratch.
 
-## Part 4 — DiT in Production (~10-15 hours)
+## Part 4 — DiT in Production (~12-18 hours)
 
-A deliberate shape change: the labs above are *build from scratch*; these are *read, run, and modify a real production codebase*. The target is [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) — a state-of-the-art open **video** DiT family (text-to-video and image-to-video). Going from image to video is a small dimensional extension, not a redesign — the 2D VAE becomes a 3D causal VAE producing `(C, T, H, W)` latents, patchify and RoPE pick up a temporal axis, compute jumps ~10×, and everything else (DiT block, AdaLN-Zero, flow matching, CFG, text conditioning) carries over unchanged.
+A deliberate shape change: the labs above are *build from scratch*; these are *read, run, modify, and serve a real production codebase*. The target is the [Wan-Video](https://github.com/Wan-Video) family — state-of-the-art open **video** DiT models (text-to-video and image-to-video). Lab 4.1 onward uses **WAN 2.1 T2V-1.3B** as the working model since it fits a 4090 cleanly; the lab-vs-production-scale table in lab 3.2 covers how the same architecture extends to WAN 2.2 (TI2V-5B, A14B MoE) at production scale.
+
+Going from image to video is a small dimensional extension, not a redesign — the 2D VAE becomes a 3D causal VAE producing `(C, T, H, W)` latents, patchify and RoPE pick up a temporal axis, compute jumps ~10×, and everything else (DiT block, AdaLN-Zero, flow matching, CFG, text conditioning) carries over unchanged.
 
 | Module | Topic | Lab |
 |---|---|---|
 | 4.1 | WAN inference + code tour | [lab4.1](./lab4.1) |
-| 4.2 | Post-training WAN — hands-on LoRA fine-tune, survey of full SFT / Diffusion-DPO / distillation | [lab4.2](./lab4.2) |
-| 4.3 | Distribution — publish your LoRA, ComfyUI custom node, quantization | [lab4.3](./lab4.3) |
-| 4.4 | Full SFT (advanced post-training) — every parameter trainable, 8-bit AdamW + gradient checkpointing on a 4090 | [lab4.4](./lab4.4) |
+| 4.2 | Inference acceleration — SGLang-Diffusion, kernel fusion, attention backends, Cache-DiT, sequence parallelism | [lab4.2](./lab4.2) |
+| 4.3 | Post-training WAN (LoRA) — hands-on LoRA fine-tune, survey of full SFT / Diffusion-DPO / distillation | [lab4.3](./lab4.3) |
+| 4.4 | Distribution — publish your LoRA, ComfyUI custom node, quantization | [lab4.4](./lab4.4) |
+| 4.5 | Full SFT (advanced post-training) — every parameter trainable, 8-bit AdamW + gradient checkpointing on a 4090 | [lab4.5](./lab4.5) |
 
 ## After the labs
 

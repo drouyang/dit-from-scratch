@@ -10,5 +10,6 @@ __pycache__/
 *.log
 data/
 
-# Lab 4.1: cloned upstream Wan2.2 repo (read-only reference)
+# Lab 4.1: cloned upstream Wan-Video repos (read-only reference)
+lab4.1/Wan2.1/
 lab4.1/Wan2.2/

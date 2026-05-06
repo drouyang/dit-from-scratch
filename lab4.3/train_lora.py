@@ -1,6 +1,6 @@
 """LoRA fine-tune Wan-2.1 T2V-1.3B on a tiny video-caption dataset.
 
-This is the hands-on centerpiece of lab 4.2 — what every other post-training
+This is the hands-on centerpiece of lab 4.3 — what every other post-training
 flavor (full SFT, DPO, distillation) is contrasted against in the README.
 
 The high-level flow is identical to lab 3.2's text-to-image training loop;

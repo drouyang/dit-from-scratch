@@ -1,14 +1,12 @@
-"""Generate a video from a text prompt with WAN 2.2 TI2V-5B (diffusers path).
+"""Generate a video from a text prompt with WAN 2.1 T2V-1.3B (diffusers path).
 
 Run:
     python inference_diffusers.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 
-Requires diffusers from source (WanPipeline isn't in stable yet):
-    pip install git+https://github.com/huggingface/diffusers
+`WanPipeline` for the WAN 2.1 family is in stable diffusers (>=0.36) — no
+from-source install needed.
 
-Memory: ~24GB VRAM. Validated on 4090 with offload, A100, H100. Will not run
-on M3 — see README for the ComfyUI + GGUF community path if you want laptop
-inference.
+Memory: ~12 GB VRAM. Validated on 4090, A10, A100, H100.
 """
 
 import argparse
@@ -22,17 +20,17 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--prompt",          required=True)
     p.add_argument("--negative-prompt", default="")
-    p.add_argument("--height",          type=int,   default=704)
-    p.add_argument("--width",           type=int,   default=1280)
-    p.add_argument("--num-frames",      type=int,   default=121,
-                   help="121 frames @ 24fps = ~5 seconds")
-    p.add_argument("--steps",           type=int,   default=50)
+    p.add_argument("--height",          type=int,   default=480)
+    p.add_argument("--width",           type=int,   default=832)
+    p.add_argument("--num-frames",      type=int,   default=49,
+                   help="49 frames @ 16 fps = ~3 seconds")
+    p.add_argument("--steps",           type=int,   default=30)
     p.add_argument("--guidance-scale",  type=float, default=5.0)
     p.add_argument("--out",             default="out.mp4")
-    p.add_argument("--fps",             type=int,   default=24)
+    p.add_argument("--fps",             type=int,   default=16)
     args = p.parse_args()
 
-    model_id = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
+    model_id = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 
     # VAE in fp32 for numeric stability; DiT in bf16 (per the model card).
     vae = AutoencoderKLWan.from_pretrained(
