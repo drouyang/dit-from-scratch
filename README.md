@@ -52,6 +52,7 @@ A deliberate shape change: the labs above are *build from scratch*; these are *r
 | 4.1 | WAN inference + code tour | [lab4.1](./lab4.1) |
 | 4.2 | Post-training WAN — hands-on LoRA fine-tune, survey of full SFT / Diffusion-DPO / distillation | [lab4.2](./lab4.2) |
 | 4.3 | Distribution — publish your LoRA, ComfyUI custom node, quantization | [lab4.3](./lab4.3) |
+| 4.4 | Full SFT (advanced post-training) — every parameter trainable, 8-bit AdamW + gradient checkpointing on a 4090 | [lab4.4](./lab4.4) |
 
 ## After the labs
 
