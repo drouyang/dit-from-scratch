@@ -32,7 +32,7 @@ The training and sampling framework DiT is trained under.
 | 2.1 | VAE | [lab2.1](./lab2.1) |
 | 2.2 | Flow Matching with Conditioning | [lab2.2](./lab2.2) |
 
-## Part 3 — DiT (~10-14 hours)
+## Part 3 — DiT (~5-8 hours)
 
 Put it together.
 
