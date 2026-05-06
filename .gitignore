@@ -7,6 +7,7 @@ __pycache__/
 .claude/
 *.pt
 *.png
+*.log
 data/
 
 # Lab 4.1: cloned upstream Wan2.2 repo (read-only reference)

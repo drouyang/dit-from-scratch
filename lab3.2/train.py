@@ -60,8 +60,12 @@ def main():
     # Data.
     print(f"loading {args.n_samples} image-caption pairs...")
     ds = TinyCOCO(n_samples=args.n_samples, image_size=args.image_size)
+    # num_workers=0: dataset is preloaded into memory in __init__, so workers
+    # add no perf benefit and re-spawning them every epoch leaks file
+    # descriptors on macOS (OSError: [Errno 24] Too many open files after
+    # ~100 epochs).
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True,
-                        collate_fn=collate, num_workers=2)
+                        collate_fn=collate, num_workers=0)
 
     # Trainable model.
     latent_size = args.image_size // 8  # SD-VAE is 8× spatial downsample
@@ -79,6 +83,20 @@ def main():
     optim = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
     print(f"DiT params: {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M")
+
+    config = {
+        "latent_size": latent_size,
+        "latent_channels": 4,
+        "patch_size": 2,
+        "hidden": 384,
+        "num_heads": 6,
+        "num_blocks": 8,
+        "text_dim": text_enc.hidden_size,
+    }
+
+    def save_checkpoint(path):
+        torch.save({"state_dict": model.state_dict(), "config": config}, path)
+
     t0 = time.time()
     step = 0
     while step < args.steps:
@@ -104,20 +122,12 @@ def main():
             if step % 200 == 0 or step == 1:
                 elapsed = time.time() - t0
                 print(f"step {step:6d}  |  {elapsed:6.1f}s  |  loss {loss.item():.4f}")
+            if step > 0 and step % 2000 == 0:
+                save_checkpoint(args.save_path)
+                print(f"  checkpoint saved at step {step}")
             step += 1
 
-    torch.save({
-        "state_dict": model.state_dict(),
-        "config": {
-            "latent_size": latent_size,
-            "latent_channels": 4,
-            "patch_size": 2,
-            "hidden": 384,
-            "num_heads": 6,
-            "num_blocks": 8,
-            "text_dim": text_enc.hidden_size,
-        },
-    }, args.save_path)
+    save_checkpoint(args.save_path)
     print(f"saved {args.save_path}")
 
 
