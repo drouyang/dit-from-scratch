@@ -70,15 +70,15 @@ The fp32 column technically fits a 4090 with no headroom. In practice you also w
 
 ## Hardware
 
-Same shape as lab 4.3's table — full SFT just bumps the per-step cost.
+Same shape as lab 4.3's table — full SFT just bumps the per-step cost. Part 4's default is **4× 4090**.
 
 | GPU | What fits | Wall clock @ 2000 steps |
 |---|---|---|
-| **1× 4090 24 GB** (lab default) | 256² × 17 frames, batch 1, grad-accum 8, GC on, 8-bit Adam | ~10–14 hours |
-| **4× 4090 24 GB** (DDP) | same per-GPU; effective batch = 32 | ~3–4 hours |
-| A100 40 GB | 384² × 17 frames; can use fp32 Adam | ~5–7 hours |
-| A100 80 GB | 480p × 25 frames; fp32 Adam, no GC | ~4–5 hours |
-| H100 80 GB | 480p × 33 frames; fp32 Adam, no GC | ~3–4 hours |
+| **4× 4090 24 GB** (Part 4 default, DDP) | 256² × 17 frames per GPU, grad-accum 8, GC on, 8-bit Adam; effective batch = 32 | **~3–4 hours** |
+| **1× 4090 24 GB** (single-card fallback) | same per-GPU config; effective batch = 8 | ~10–14 hours |
+| A100 40 GB (1×) | 384² × 17 frames; can use fp32 Adam | ~5–7 hours |
+| A100 80 GB (1×) | 480p × 25 frames; fp32 Adam, no GC | ~4–5 hours |
+| H100 80 GB (1×) | 480p × 33 frames; fp32 Adam, no GC | ~3–4 hours |
 
 For this scale of SFT (1.3B model), DDP is the right scaling shape — every GPU keeps a full model copy. **FSDP** (sharding params/grads/optim across GPUs) is what you reach for when even one model copy doesn't fit per GPU; for 1.3B at bf16 + 8-bit Adam that's not the case yet, but it kicks in for 14B (Wan-2.2 A14B) full SFT.
 

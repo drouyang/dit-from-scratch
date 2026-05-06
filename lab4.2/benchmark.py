@@ -54,17 +54,46 @@ def fmt_mem(bytes_: int) -> str:
 
 # ---------- diffusers baseline ------------------------------------------------
 
-def run_diffusers(args) -> tuple[float, int, str]:
-    """Returns (wall_clock_seconds, peak_gpu_bytes, output_path)."""
+def run_diffusers(args, *, compile_mode: str | None = None) -> tuple[float, int, str]:
+    """Run stock diffusers WanPipeline, optionally with torch.compile.
+
+    compile_mode:
+      None              -- pure Python WanPipeline.__call__ (the baseline)
+      "reduce-overhead" -- + torch.compile with CUDA graph capture
+                           (best mode for diffusion sampling loops)
+      "max-autotune"    -- + torch.compile with autotune
+                           (slowest compile, fastest steady-state)
+
+    Returns (gen_seconds, peak_gpu_bytes, output_path). For compiled runs we
+    do a warmup call before timing so the reported number is steady-state,
+    not first-call-with-compile-time.
+    """
     from diffusers import AutoencoderKLWan, WanPipeline
     from diffusers.utils import export_to_video
 
-    print("\n=== diffusers ===")
+    label = "diffusers" if compile_mode is None else f"diffusers + torch.compile({compile_mode})"
+    print(f"\n=== {label} ===")
     t0 = time.time()
 
     vae = AutoencoderKLWan.from_pretrained(WAN_REPO, subfolder="vae", torch_dtype=torch.float32)
     pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda")
     print(f"  load:     {fmt_secs(time.time() - t0)}")
+
+    if compile_mode is not None:
+        pipe.transformer = torch.compile(pipe.transformer, mode=compile_mode)
+        # Warmup pass — first call triggers graph capture / autotune. Use a
+        # tiny step count so warmup is short relative to the real run.
+        print(f"  warming up torch.compile (this is the slow part — ~30-60s)...")
+        tw = time.time()
+        _ = pipe(
+            prompt=args.prompt,
+            height=args.height, width=args.width,
+            num_frames=args.num_frames,
+            num_inference_steps=2,                  # just enough to compile
+            guidance_scale=args.guidance,
+            generator=torch.Generator("cuda").manual_seed(0),
+        )
+        print(f"  warmup:   {fmt_secs(time.time() - tw)}")
 
     torch.cuda.reset_peak_memory_stats()
     t1 = time.time()
@@ -80,13 +109,14 @@ def run_diffusers(args) -> tuple[float, int, str]:
     gen_secs = time.time() - t1
     peak_mem = torch.cuda.max_memory_allocated()
 
-    out_path = "out_diffusers.mp4"
+    suffix = "" if compile_mode is None else f"_compile_{compile_mode}"
+    out_path = f"out_diffusers{suffix}.mp4"
     export_to_video(output, out_path, fps=args.fps)
-    print(f"  generate: {fmt_secs(gen_secs)}")
+    print(f"  generate: {fmt_secs(gen_secs)} (steady-state, post-warmup)")
     print(f"  peak VRAM:{fmt_mem(peak_mem):>10}")
     print(f"  saved {out_path}")
 
-    # Tear down so SGLang has the GPU to itself.
+    # Tear down so the next backend has the GPU to itself.
     del pipe, vae, output
     torch.cuda.empty_cache()
     return gen_secs, peak_mem, out_path
@@ -152,6 +182,8 @@ def main():
     p.add_argument("--fps",        type=int,   default=16)
     p.add_argument("--seed",       type=int,   default=42)
     p.add_argument("--skip-diffusers", action="store_true")
+    p.add_argument("--skip-compile",   action="store_true",
+                   help="Skip the diffusers + torch.compile run (~1-2 min extra)")
     p.add_argument("--skip-sglang",    action="store_true")
     args = p.parse_args()
 
@@ -161,20 +193,27 @@ def main():
     print(f"prompt: {args.prompt!r}")
     print(f"shape:  {args.num_frames} frames @ {args.width}×{args.height},  steps={args.steps},  cfg={args.guidance},  seed={args.seed}")
 
-    diff_secs = sg_secs = float("nan")
-    diff_mem = sg_mem = 0
+    diff_secs = comp_secs = sg_secs = float("nan")
+    diff_mem  = comp_mem  = sg_mem  = 0
     if not args.skip_diffusers:
         diff_secs, diff_mem, _ = run_diffusers(args)
+    if not args.skip_compile:
+        comp_secs, comp_mem, _ = run_diffusers(args, compile_mode="reduce-overhead")
     if not args.skip_sglang:
         sg_secs, sg_mem, _ = run_sglang(args)
 
     print("\n=== comparison ===")
-    print(f"{'backend':<20} {'wall':>10}  {'peak VRAM':>12}")
-    print(f"{'-'*44}")
-    print(f"{'diffusers':<20} {fmt_secs(diff_secs):>10}  {fmt_mem(diff_mem) if diff_mem else '         —':>12}")
-    print(f"{'sglang-diffusion':<20} {fmt_secs(sg_secs):>10}  {'(see sglang logs)':>12}")
-    if not (diff_secs != diff_secs or sg_secs != sg_secs):  # both finite
-        print(f"\nspeedup: {diff_secs / sg_secs:.2f}× (sglang vs diffusers, end-to-end)")
+    print(f"{'backend':<28} {'wall':>10}  {'peak VRAM':>12}")
+    print(f"{'-'*52}")
+    print(f"{'diffusers':<28} {fmt_secs(diff_secs):>10}  {fmt_mem(diff_mem) if diff_mem else '         —':>12}")
+    print(f"{'diffusers + torch.compile':<28} {fmt_secs(comp_secs):>10}  {fmt_mem(comp_mem) if comp_mem else '         —':>12}")
+    print(f"{'sglang-diffusion':<28} {fmt_secs(sg_secs):>10}  {'(see sglang logs)':>12}")
+
+    if diff_secs == diff_secs:  # finite
+        if comp_secs == comp_secs:
+            print(f"\ntorch.compile speedup: {diff_secs / comp_secs:.2f}×  (vs diffusers baseline)")
+        if sg_secs == sg_secs:
+            print(f"sglang        speedup: {diff_secs / sg_secs:.2f}×  (vs diffusers baseline)")
 
 
 if __name__ == "__main__":

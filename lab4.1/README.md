@@ -4,14 +4,16 @@
 
 ## Compute reality
 
-WAN 2.1 T2V-1.3B is the smallest official WAN checkpoint (~1.3B params); inference fits comfortably on a 4090 (24 GB) and even tighter consumer GPUs.
+Part 4's compute target is a **4× RTX 4090 server**. This lab only needs **1 GPU** (single-GPU inference is enough to run the code-tour exercises and generate a video); the multi-GPU configuration is what makes lab 4.2's sequence-parallelism content hands-on.
+
+WAN 2.1 T2V-1.3B is the smallest official WAN checkpoint (~1.3B params); inference fits comfortably on a single 4090 (24 GB), with VRAM to spare.
 
 | Path | Hardware | Notes |
 |---|---|---|
-| **diffusers `WanPipeline`** | 12 GB+ VRAM (4090, 4080, 3090, A10) | Cleanest API; recommended for the code tour |
-| **Official `Wan-Video/Wan2.1`** | 12 GB+ VRAM | Production codebase; what the call-path tour points into |
+| **diffusers `WanPipeline`** | 1× 4090 (or 12 GB+ consumer GPU) | Cleanest API; recommended for the code tour |
+| **Official `Wan-Video/Wan2.1`** | 1× 4090 | Production codebase; what the call-path tour points into |
 
-For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 (or any consumer GPU with 12+ GB) for ~10 minutes.
+For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 for ~10 minutes.
 
 ## Files
 

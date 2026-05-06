@@ -74,22 +74,22 @@ Things you don't typically wrap with LoRA:
 
 ### Hardware
 
-The lab's defaults are sized to fit a **single 4090 (24 GB)** at 256 × 256 × 17 frames with gradient checkpointing. Scale up if you have more compute.
+Part 4's compute target is a **4× 4090 server**. The per-GPU config is sized to fit a single 4090 (24 GB) at 256 × 256 × 17 frames with gradient checkpointing — DDP across the 4 cards just divides wall clock.
 
 | GPU | What fits | Wall clock @ 2000 steps |
 |---|---|---|
-| **1× 4090 24 GB** (lab default) | 256×256 × 17 frames, batch 1, grad-accum 8, gradient checkpointing **on** | ~6–8 hours |
-| **4× 4090 24 GB** (DDP) | same per-GPU config; effective batch = 32 | ~1.5–2 hours |
-| A100 40 GB | 384×384 × 17 frames, batch 1, grad-accum 8 | ~3–4 hours |
-| A100 80 GB | 480p × 25 frames, batch 1, grad-accum 4, can drop gradient-checkpointing | ~2–3 hours |
-| H100 80 GB | 480p × 33 frames, batch 1, grad-accum 4, can drop gradient-checkpointing | ~1.5–2.5 hours |
+| **4× 4090 24 GB** (Part 4 default, DDP) | 256×256 × 17 frames per GPU, grad-accum 8, GC on; effective batch = 32 | **~1.5–2 hours** |
+| **1× 4090 24 GB** (single-card fallback) | same per-GPU config; effective batch = 8 | ~6–8 hours |
+| A100 40 GB (1×) | 384×384 × 17 frames, batch 1, grad-accum 8 | ~3–4 hours |
+| A100 80 GB (1×) | 480p × 25 frames, batch 1, grad-accum 4, can drop GC | ~2–3 hours |
+| H100 80 GB (1×) | 480p × 33 frames, batch 1, grad-accum 4, can drop GC | ~1.5–2.5 hours |
 | MacBook M3 | inference only — *don't* try to LoRA-train a 1.3B video DiT on MPS | — |
 
 **Default config rationale.** 17 = 4·4 + 1 lines up with Wan-VAE's 4× temporal compression (it expects an "anchor frame" plus multiples of 4). 256×256 lines up with WAN's 8× spatial compression. Gradient checkpointing trades a ~30% wall-clock hit for the activation memory needed to fit the 24GB budget.
 
-**Going multi-GPU.** `accelerate launch` automatically uses every visible GPU via DDP — no code change needed. On 4× 4090, you'll see effective batch size = `1 (batch) × 8 (grad-accum) × 4 (GPUs) = 32`. Wall-clock divides almost linearly.
+**Going multi-GPU.** `accelerate launch` automatically uses every visible GPU via DDP — no code change needed. On 4× 4090, effective batch size = `1 (batch) × 8 (grad-accum) × 4 (GPUs) = 32`. Wall-clock divides almost linearly.
 
-**Easiest path**: rent a single 4090 from Vast / RunPod (~$0.40–0.80/hr) for an overnight run, or 4× 4090 / 1× H100 if you want sub-2-hour iteration.
+**Easiest path**: rent a 4× 4090 server from Lambda / Vast / RunPod (~$1.50–3/hr for the full server) for an afternoon, or fall back to a single 4090 (~$0.40–0.80/hr) overnight if 4× isn't available.
 
 ### Setup
 

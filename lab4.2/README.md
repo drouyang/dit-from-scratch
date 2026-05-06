@@ -53,14 +53,16 @@ Useful learning exercise: pick one flag, run the same prompt with and without it
 
 ## Compute reality
 
-CUDA-required for the meaningful optimizations. Apple MPS works for SGLang-Diffusion via a separate install path (`uv pip install -e "python[all_mps]"`), but most kernel-level speedups are CUDA-only. WAN 2.1 T2V-1.3B fits a 4090.
+Part 4's compute target — and the lab where it earns its keep. **4× 4090 (96 GB total VRAM)** is the default; single-GPU still covers the basic benchmark and the `torch.compile` deep dive, but the sequence-parallelism content (USP, Ring, Ulysses) needs multi-GPU.
 
 | Hardware | What works |
 |---|---|
-| **1× 4090 / 4080 / 3090** (≥12 GB VRAM) | All single-GPU paths (FlashAttention, SageAttention, Cache-DiT, layerwise offload). The realistic target. |
-| **Multi-4090 / multi-A100** | Adds sequence + tensor parallelism. Useful when you push to higher resolutions / longer clips. |
+| **4× 4090** (lab default) | Everything: single-GPU optimizations (FlashAttention, Cache-DiT, layerwise offload), `torch.compile`, **and** USP / Ring / Ulysses across all 4 cards. |
+| **1× 4090 / 4080 / 3090** (≥12 GB VRAM) | Single-GPU paths only. Sequence parallelism is read-only at this tier. |
 | **B200 / H200** | Required for WAN 2.2-A14B (the MoE flagship). T2V-1.3B doesn't need it. |
 | **Apple M3 / MPS** | Stock diffusers works (slowly). SGLang-Diffusion's MPS backend exists but is the courtesy backend — most kernels won't apply. |
+
+CUDA-required for the meaningful optimizations.
 
 ## Files
 
@@ -89,7 +91,7 @@ sglang generate --help    # should print the CLI flags listed in the toggle map
 
 ## Run the benchmark
 
-Generate the same 3-second clip via both backends:
+Generate the same 3-second clip via three backends — stock diffusers, diffusers + `torch.compile`, and SGLang-Diffusion:
 
 ```bash
 python benchmark.py --prompt "a fluffy red panda eating bamboo on a tree branch"
@@ -103,9 +105,17 @@ shape:  49 frames @ 832×480,  steps=30,  cfg=5.0,  seed=42
 
 === diffusers ===
   load:        45.2s
-  generate:   220.4s
+  generate:   220.4s (steady-state, post-warmup)
   peak VRAM:  10.78 GB
   saved out_diffusers.mp4
+
+=== diffusers + torch.compile(reduce-overhead) ===
+  load:        45.0s
+  warming up torch.compile (this is the slow part — ~30-60s)...
+  warmup:      48.7s
+  generate:   132.8s (steady-state, post-warmup)
+  peak VRAM:  11.42 GB
+  saved out_diffusers_compile_reduce-overhead.mp4
 
 === sglang ===
   $ sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers ...
@@ -113,15 +123,19 @@ shape:  49 frames @ 832×480,  steps=30,  cfg=5.0,  seed=42
   saved out_sglang.mp4
 
 === comparison ===
-backend                    wall    peak VRAM
---------------------------------------------
-diffusers                 220.4s     10.78 GB
-sglang-diffusion           82.1s    (see sglang logs)
+backend                          wall     peak VRAM
+----------------------------------------------------
+diffusers                       220.4s     10.78 GB
+diffusers + torch.compile       132.8s     11.42 GB
+sglang-diffusion                 82.1s    (see sglang logs)
 
-speedup: 2.69× (sglang vs diffusers, end-to-end)
+torch.compile speedup: 1.66×  (vs diffusers baseline)
+sglang        speedup: 2.69×  (vs diffusers baseline)
 ```
 
-(Numbers will vary by GPU and SGLang version. The shape — single-digit-multiple speedup with the same prompt + seed + steps — is what you're verifying.)
+Numbers vary by GPU, drivers, and SGLang version. The shape — `torch.compile` alone gets ~1.5×, SGLang adds another ~1.6× by composing kernels and caching that `torch.compile` can't reach — is what you're verifying.
+
+`--skip-compile` skips the `torch.compile` run (saves ~1–2 min). `--skip-sglang` skips the SGLang run.
 
 ## Suggested A/B exercises
 
@@ -146,6 +160,166 @@ sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
 ```
 
 Each run gives you a wall-clock number. Build a small table; the per-technique deltas are roughly what the SGLang-Diffusion blog reports.
+
+## Deep dive: torch.compile + AOT for inference
+
+The other production lever, complementary to SGLang-Diffusion's kernel composition: PyTorch's compiler. **One line of code, ~1.3–1.8× speedup on a single GPU**, no SGLang install needed. Works on top of stock `WanPipeline`.
+
+### `torch.compile` (JIT)
+
+```python
+pipe = WanPipeline.from_pretrained(...).to("cuda")
+pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead")
+```
+
+That's it. The first inference call triggers compilation (~30–60 s warmup); subsequent calls are fast.
+
+What `mode` does:
+
+- **`default`** — TorchDynamo + AOTAutograd + Inductor. Constant folding, dead-code elimination, kernel fusion via Triton.
+- **`reduce-overhead`** — adds CUDA graph capture on top. Eliminates per-step Python and kernel-launch overhead. **Best mode for diffusion sampling loops** since the same forward is called N times with only `t` changing.
+- **`max-autotune`** — autotunes Triton kernels at compile time. ~5–10 minutes of compile, ~5–10% extra steady-state speedup. Worth it for production builds, not dev iteration.
+
+Pitfalls:
+
+- **Dynamic shapes recompile.** Vary `num_frames` between calls and you'll trigger a recompile (and lose CUDA graph capture). Either fix the shape, or accept the recompile cost.
+- **First call is slow.** Always exclude warmup from your benchmarks.
+- **VAE is rarely worth compiling.** Most of the compute is in the transformer; compiling the VAE adds compile-time cost without proportional speedup.
+
+`benchmark.py` in this lab includes a `torch.compile` path so you can A/B against the stock diffusers baseline on the same prompt/seed.
+
+### AOT compilation (`torch.export` + AOTInductor)
+
+`torch.compile` is JIT — compile happens in your process, on first call. **AOTInductor** lets you compile *ahead of time* and ship a self-contained `.pt2` artifact you can load without Python in the loop.
+
+```python
+# Compile once, save artifact:
+exported = torch.export.export(pipe.transformer, args=example_inputs)
+torch._inductor.aoti_compile_and_package(exported, "wan_transformer.pt2")
+
+# Later, in production:
+loaded = torch._inductor.aoti_load_package("wan_transformer.pt2")
+output = loaded(z_t, t, text_embeds, mask)
+```
+
+Why production cares:
+
+- **No Python overhead at inference.** The packaged binary is self-contained C++.
+- **Shippable.** Build once on a beefy box, deploy to any GPU with the right CUDA version.
+- **Composable.** Wrap the AOT-compiled transformer in a regular Python sampling loop; only the hot inner forward is "compiled."
+
+Caveats:
+
+- API is still evolving (`torch._inductor.aoti_compile_and_package`, `torch._inductor.aoti_load_package`) — check current PyTorch docs for the latest signatures.
+- AOT with dynamic shapes is doable but harder; many production deployments fix the shape first.
+
+### How `torch.compile` and SGLang-Diffusion overlap
+
+Most of SGLang-Diffusion's "JIT" kernels (the QK-norm fusion, fused gate+up+SiLU, fused QKV) are conceptually what `torch.compile` would generate from the same Python. SGLang-Diffusion adds three things `torch.compile` can't reach:
+
+- **Ahead-of-time decisions** — which attention backend, which precision, which caching policy.
+- **External kernel libraries** — FlashInfer, Cache-DiT — `torch.compile` uses Inductor + Triton, doesn't dispatch into other libraries.
+- **Multi-GPU orchestration** — USP (sequence parallelism), layerwise weight offload — outside `torch.compile`'s purview entirely.
+
+For single-GPU inference, **`torch.compile` alone gets you most of the way.** SGLang-Diffusion adds another 1.5–2× on top by composing all the parts `torch.compile` can't reach.
+
+## Deep dive: sequence parallelism (USP = Ring + Ulysses)
+
+Why video DiT specifically needs this: at 81 frames × 720p, the patchified token count is millions. The attention `Q @ Kᵀ` matrix at that length doesn't fit a single GPU's memory regardless of any other optimization. Image DiT hits ~16k tokens at most and never needs sequence sharding; video forces it.
+
+This is **the technique that earns the curriculum's 4090×4 compute target**. On 1× 4090 you'd just be reading the mental model; on 4× 4090 you can actually run the toggles below and watch wall-clock scale.
+
+### Ring Attention — shard sequence, stream K/V
+
+Each of N GPUs holds 1/N of the sequence's `Q`, `K`, `V`. To compute attention, every GPU needs to see every other GPU's K/V slice. Ring Attention does this by *streaming* K/V chunks around the GPUs:
+
+```
+4 GPUs, sequence sharded 4-way
+─────────────────────────────────────────────────
+GPU 0:  Q[0]    K[0],V[0]
+GPU 1:  Q[1]    K[1],V[1]
+GPU 2:  Q[2]    K[2],V[2]
+GPU 3:  Q[3]    K[3],V[3]
+
+Step 1:  each GPU does partial attention(Q[i], K[i], V[i])
+Step 2:  K/V chunks rotate clockwise; GPU i now has K[i-1], V[i-1]
+         partial attention(Q[i], K[i-1], V[i-1]); update online softmax
+Step 3:  rotate again; partial attention with K[i-2], V[i-2]
+Step 4:  rotate again; partial attention with K[i-3], V[i-3]
+─────────────────────────────────────────────────
+After N steps, every GPU has the full attention output for *its* Q chunk.
+```
+
+The softmax is updated using the **same online-softmax trick FlashAttention uses** (track running max + rescale partial sums). After N rounds, results are mathematically identical to single-GPU attention.
+
+**Communication overlaps with compute** — while GPU `i` computes attention with the current K/V chunk, the next chunk is in-flight from GPU `i+1`. Bandwidth-efficient; latency-tolerant.
+
+### Ulysses Attention — shard heads, all-to-all
+
+Same goal, totally different communication pattern:
+
+```
+Initial layout: sequence-sharded
+  GPU i has [Q[i], K[i], V[i]]   shape (seq/N, all_heads, head_dim)
+
+→ All-to-all #1: redistribute to head-sharded
+  GPU i has [Q, K, V]            shape (full_seq, n_heads/N, head_dim)
+
+→ Local attention: each GPU does standard attention on its head slice
+
+→ All-to-all #2: redistribute back to sequence-sharded
+  GPU i has output[i]            shape (seq/N, all_heads, head_dim)
+```
+
+Communication: **2× all-to-all per attention layer**. Lower latency than Ring (`2` rounds vs `N` rounds), but consumes more total bandwidth at large `N`. Better for shorter sequences / fewer GPUs.
+
+### USP — combine both
+
+xDiT's contribution: shard the sequence in *two* dimensions. Use Ring across many GPUs (good bandwidth utilization) and Ulysses *within* a small Ring group (low latency for the inner step).
+
+```
+8-GPU example:  --ulysses-degree 2 --ring-degree 4
+
+  Inner: 2-way Ulysses (head-shard via all-to-all)
+  Outer: 4-way Ring   (sequence-shard via streaming K/V)
+```
+
+Tuning rule of thumb: **Ulysses degree should match NVLink topology** (NVLink-connected pairs do the all-to-all efficiently); **Ring degree spans across NVLink boundaries** (higher latency tolerance there).
+
+### Diffusion-specific complications
+
+1. **CFG batching.** Conditional and unconditional forwards run as one `(2·B, ...)` batch. Sequence parallelism has to be CFG-aware so the all-to-all doesn't shuffle the conditional samples into the unconditional ones.
+2. **3D RoPE positions.** Sharded sequences need consistent `(t, h, w)` indices per token — each shard must know which slice of the global position grid it owns. xDiT handles this; if you write your own SP, it's the bug to watch for.
+3. **Cross-attention K/V are tiny** (77 text tokens × hidden). **Don't** sequence-shard them — replicate per GPU. They're cheap.
+
+### Multi-GPU exercise (4× 4090 default)
+
+```bash
+# Single GPU baseline:
+sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
+    --sp-degree 1
+
+# Pure Ulysses (all-to-all only), 4 GPUs:
+sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
+    --sp-degree 4 --ulysses-degree 4 --ring-degree 1
+
+# Pure Ring (streaming K/V only), 4 GPUs:
+sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
+    --sp-degree 4 --ulysses-degree 1 --ring-degree 4
+
+# USP hybrid (2-way Ulysses × 2-way Ring), 4 GPUs:
+sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
+    --sp-degree 4 --ulysses-degree 2 --ring-degree 2
+```
+
+All four should produce identical output for the same seed (sequence parallelism is mathematically equivalent to single-GPU). Differences are in wall clock and per-GPU memory. At this scale (1.3B model, 480p video), the four 4090s aren't NVLinked so all-to-all bandwidth is PCIe-limited — Ring tends to win over Ulysses. At production scales (14B + 720p × 81 frames on NVLinked H100s), USP hybrid wins, and it's the difference between "fits" and "doesn't fit."
+
+### Where to read
+
+- **[Ring Attention paper (Liu et al. 2023)](https://arxiv.org/abs/2310.01889)** — the streaming-K/V scheme.
+- **[DeepSpeed-Ulysses paper (Jacobs et al. 2023)](https://arxiv.org/abs/2309.14509)** — the all-to-all scheme.
+- **[`xfuser` / xDiT source](https://github.com/xdit-project/xDiT)** — production implementation; the diffusion-specific glue (CFG-aware SP, 3D RoPE handling) lives here.
+- **[`Wan-Video/Wan2.2/wan/distributed/`](https://github.com/Wan-Video/Wan2.2/tree/main/wan/distributed)** — a real production team's adaptation of xfuser; smaller surface area than xfuser itself.
 
 ## Discussion
 
