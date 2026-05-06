@@ -1,6 +1,6 @@
 # Module 4.4 — Distribution
 
-> Part 4 — DiT in Production · [DiT from Scratch](../README.md)
+> Part 4 — Video DiT in Production · [DiT from Scratch](../README.md)
 
 **Goal**: take what you trained in lab 4.3 and *publish it in three forms* each audience expects to install:
 
