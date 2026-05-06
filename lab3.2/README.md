@@ -34,6 +34,8 @@ Cross-attention is unmodulated (no AdaLN gating around it) — the text tokens a
 
 ### Why frozen pretrained VAE + text encoder
 
+**Latent space is task-agnostic.** SD-VAE's latent encodes "natural images"; CLIP's text encoder encodes "natural language." Neither is specific to text-to-image-on-COCO — they're general-purpose, exactly the kind of pretrained backbone reuse that vision and NLP have done for years. SD-VAE was trained on a curated LAION subset (hundreds of millions of images, with perceptual + adversarial losses). CLIP saw 400M (text, image) pairs.
+   
 Decoupling the three modalities is what makes scale-up tractable:
 
 ```
@@ -47,12 +49,7 @@ Decoupling the three modalities is what makes scale-up tractable:
 
 The DiT learns to navigate the *fixed* latent space defined by SD-VAE, conditioned on the *fixed* text representation from CLIP. If you trained them jointly, every DiT experiment would also need to budget VAE + text-encoder retraining — that kills iteration speed. By freezing, every change is local to the DiT.
 
-Concrete reasons:
-
-1. **Data efficiency.** SD-VAE was trained on a curated LAION subset (hundreds of millions of images, with perceptual + adversarial losses). CLIP saw 400M (text, image) pairs. Our 5K COCO pairs can't begin to match that — using their checkpoints is the only sensible choice.
-2. **Memory and compute.** Frozen modules don't need gradients, optimizer state, or a backward pass. Unfreezing them would roughly triple training cost (forward + backward + Adam state) for no quality gain.
-3. **Latent space is task-agnostic.** SD-VAE's latent encodes "natural images"; CLIP's text encoder encodes "natural language." Neither is specific to text-to-image-on-COCO — they're general-purpose, exactly the kind of pretrained backbone reuse that vision and NLP have done for years.
-4. **Production reality.** SD1.x, SDXL, SD3, FLUX all freeze their VAE and text encoder during DiT training. We're matching the actual recipe.
+SD1.x, SDXL, SD3, FLUX all freeze their VAE and text encoder during DiT training. We're matching the actual recipe.
 
 ### Lab vs production scale
 
