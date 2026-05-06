@@ -77,7 +77,7 @@ The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct na
 | --- | --- |
 | `vae.py` | Pretrained SD-VAE (`stabilityai/sd-vae-ft-mse`) wrapper: `.encode(image) → latent`, `.decode(latent) → image`. Includes the standard 0.18215 scale factor. |
 | `text_encoder.py` | Pretrained CLIP text encoder (`openai/clip-vit-base-patch32`) wrapper. Returns per-token outputs (for cross-attention), pooled output (for AdaLN), and attention mask. |
-| `data.py` | `diffusers/pokemon-gpt4-captions` (833 image-caption pairs) loaded via HuggingFace `datasets`, center-cropped + resized to 64×64. |
+| `data.py` | [`diffusers/pokemon-gpt4-captions`](https://huggingface.co/datasets/diffusers/pokemon-gpt4-captions/viewer/default/train) (833 image-caption pairs) loaded via HuggingFace `datasets`, center-cropped + resized to 64×64. |
 | `dit.py` | DiT with `SelfAttention` + `CrossAttention` + `MLP` per block. `TextProjector` (replaces `LabelEmbedder`) and `TextTokenProjector` for the two text-conditioning paths. |
 | `flow.py` | Flow matching `fm_q_sample` and `fm_euler_sample`, signature adapted for text inputs. |
 | `train.py` | Training loop. Encodes images via VAE and captions via CLIP at each step (pretrained, no_grad), trains DiT on the velocity-prediction objective. |

@@ -93,15 +93,34 @@ def generate(prompt, n_images, steps, cfg_scale, seed):
     return out
 
 
+# Captions sampled from the training set
+# (https://huggingface.co/datasets/diffusers/pokemon-gpt4-captions/viewer/default/train).
+# Click one to drop it into the prompt box; these are exactly the kind of
+# strings the model saw during training, so they are a known-good starting
+# point before the user wanders into out-of-distribution prompts.
+EXAMPLE_PROMPTS = [
+    "A cheerful Bulbasaur ready for its next Pokémon adventure.",
+    "A curious Caterpie with large black eyes and a green body featuring distinctive yellow and tan patterns.",
+    "A scheming Voltorb awaits its next battle.",
+    "A friendly, smiling white orb with a rosy blush and closed eyes.",
+    "A cluster of Exeggcute, the egg-themed Pokémon, with expressions of determined annoyance.",
+    "A Cubone sits clutching its signature bone, its face hidden by a skull helmet.",
+    "A poised Hitmonchan with red boxing gloves raised, ready to deliver a powerful punch.",
+    "A cheerful pink Lickitung with its long tongue lolling out.",
+]
+
+
 with gr.Blocks(title="Lab 3.2 — Pokemon text-to-image DiT") as demo:
     gr.Markdown(
         "# Lab 3.2 — Pokemon text-to-image DiT\n"
         "Type a prompt; the trained latent DiT generates images via "
         "flow-matching Euler integration in SD-VAE's latent space, then "
-        "decodes back to pixels. The model was trained on Pokemon "
-        "GPT-4-captions, so all prompts get drawn in that style — "
-        "feature words like *green*, *with horns*, *with wings*, *fire*, "
-        "*water* nudge the silhouette and palette."
+        "decodes back to pixels. The model was trained on "
+        "[diffusers/pokemon-gpt4-captions]"
+        "(https://huggingface.co/datasets/diffusers/pokemon-gpt4-captions/viewer/default/train), "
+        "so all prompts get drawn in that style — feature words like "
+        "*green*, *with horns*, *with wings*, *fire*, *water* nudge the "
+        "silhouette and palette."
     )
     with gr.Row():
         with gr.Column(scale=1):
@@ -109,6 +128,11 @@ with gr.Blocks(title="Lab 3.2 — Pokemon text-to-image DiT") as demo:
                 label="Prompt",
                 value="a cute green pokemon with red eyes and a curled tail",
                 lines=3,
+            )
+            gr.Examples(
+                examples=[[p] for p in EXAMPLE_PROMPTS],
+                inputs=[prompt],
+                label="Example prompts (sampled from the training captions)",
             )
             n_images = gr.Slider(1, 8, value=4, step=1,
                                  label="Number of images")
