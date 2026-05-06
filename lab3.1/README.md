@@ -25,14 +25,7 @@ x = x + attn(LayerNorm(x))                    # sublayer 1: multi-head self-atte
 x = x + mlp (LayerNorm(x))                    # sublayer 2: position-wise MLP (FFN)
 ```
 
-A DiT block adds `c`-driven modulation around each sublayer's LN, gates each sublayer's residual contribution, and rotates Q/K inside MHA via RoPE:
-
-```python
-x = x + gate_msa * attn(modulate(LN(x), shift_msa, scale_msa))
-x = x + gate_mlp * mlp (modulate(LN(x), shift_mlp, scale_mlp))
-```
-
-Each sublayer is two steps — **predict** the modulation parameters from `c`, then **apply** them to the activations:
+A DiT block keeps the same two-sublayer backbone (pre-norm + residual). Per block, **predict** six modulation parameters from `c` once, then **apply** them to gate and modulate both sublayers:
 
 ```python
 shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = adaLN_modulation(c).chunk(6, dim=-1)   # predict
@@ -40,7 +33,7 @@ x = x + gate_msa * attn(modulate(LN(x), shift_msa, scale_msa))                  
 x = x + gate_mlp * mlp (modulate(LN(x), shift_mlp, scale_mlp))                                          # apply (sublayer 2)
 ```
 
-Same backbone (pre-norm + residual around two sublayers), three new things:
+Three new things compared to the GPT block:
 
 - **`modulate(shift, scale)` inside the LN path** — vanilla LN's affine replaced by per-`c` shift+scale.
 - **`× gate` on the residual** — each sublayer's contribution is gated by a per-`c` scalar; zero-init means blocks start as identity.
