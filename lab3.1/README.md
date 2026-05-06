@@ -237,7 +237,7 @@ def modulate(x, shift, scale):
     return x * (1 + scale) + shift
 ```
 
-**What "Zero" means.** The final `Linear` in every block's `adaLN_modulation` is initialized to **zero**. So at init:
+**What the "Zero" in AdaLN-Zero means.** The final `Linear` in every block's `adaLN_modulation` is initialized to **zero**. So at init:
 
 - `shift = scale = 0` → `modulate(LN(x), 0, 0) = LN(x)` (vanilla LN)
 - `gate = 0` → `x + 0 * sublayer(...) = x` (the block is the identity)
