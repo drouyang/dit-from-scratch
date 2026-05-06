@@ -59,15 +59,15 @@ The DiT learns to navigate the fixed latent space defined by SD-VAE, conditioned
 
 Same architecture, very different parameter counts and data:
 
-| | Lab 3.2 | SD3 / FLUX (production) |
-|---|---|---|
-| VAE | SD-VAE-ft-mse — **84M** params, 4-channel latent | Same SD-VAE family — 84M (sometimes upgraded to 16-channel) |
-| Text encoder | CLIP-base — **120M** params, 512-dim, 77 tokens | CLIP-L + CLIP-G + T5-XXL — together **~12B** params, longer context |
-| DiT | **10M** (8 blocks × 384 hidden) | **2B** (SD3) / **12B** (FLUX) |
-| Training data | **833** Pokemon image-caption pairs | hundreds of millions of (image, caption) pairs |
-| Training compute | ~hours on a laptop | thousands of A100/H100-hours |
+| | Lab 3.2 (image) | SD3 / FLUX (image) | WAN 2.2 (video) |
+|---|---|---|---|
+| VAE | SD-VAE-ft-mse — **84M** params, 4-channel image latent | Same SD-VAE family — 84M (sometimes upgraded to 16-channel) | Wan-VAE — 3D causal, **~250M** params, 16- to 48-channel video latent (4× temporal + 8–16× spatial compression) |
+| Text encoder | CLIP-base — **120M** params, 512-dim, 77 tokens | CLIP-L + CLIP-G + T5-XXL — together **~12B** params, longer context | umT5-XXL — **~11B** params, multilingual T5-XXL variant |
+| DiT | **10M** (8 blocks × 384 hidden) | **2B** (SD3) / **12B** (FLUX) | **5B** (TI2V-5B dense) up to **27B-total / 14B-activated** (A14B MoE) |
+| Training data | **833** Pokemon image-caption pairs | hundreds of millions of (image, caption) pairs | hundreds of millions of (video clip, caption) pairs |
+| Training compute | ~hours on a laptop | thousands of A100/H100-hours | tens of thousands of H100-hours |
 
-The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct natural images cleanly, so production keeps it small. Almost all the production scale-up went into the DiT itself and into a much larger text encoder stack (T5-XXL alone is ~11B params, dwarfing everything else combined).
+The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct natural images cleanly, so image production keeps it small. Almost all the image-scale-up went into the DiT itself and into a much larger text encoder stack (T5-XXL alone is ~11B params, dwarfing everything else combined). For video, the VAE picks up a temporal dimension (Wan-VAE compresses along time as well as space) and grows ~3×, but the dominant cost is still the DiT — WAN 2.2's flagship A14B is an MoE with 27B total parameters.
 
 
 
