@@ -8,7 +8,7 @@ End-to-end pipeline:
     pred = DiT(z_t, t, text_tokens, text_pooled, mask)
     loss = MSE(pred, noise - z_0)                 (velocity target)
 
-Defaults are sized for a few-hour M3 run on the 833 Pokemon BLIP-captioned
+Defaults are sized for a few-hour M3 run on the 833 Pokemon GPT-4-captioned
 image-caption pairs.
 """
 

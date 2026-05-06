@@ -1,6 +1,6 @@
 # Module 3.2 — Latent text-to-image DiT
 
-**Goal**: train a real text-to-image DiT — pretrained CLIP text encoder + pretrained SD-VAE + the lab 3.1 DiT architecture (with cross-attention added) — on **`lambdalabs/pokemon-blip-captions`**: 833 Pokemon images with BLIP-generated captions like *"a drawing of a green pokemon with red eyes"*. 833 pairs is tiny by production standards, but the captions are real natural language — diverse color, shape, and feature words across hundreds of Pokemon designs — so the text encoder is doing real work, not class lookup. End-to-end "type a prompt, get an image." This is the SD3 / FLUX recipe at small scale, applied to a laptop-friendly dataset. *(MS-COCO would be the canonical choice, but the popular HF COCO-captions datasets all use script-based loaders that the current `datasets` library refuses; pokemon-blip-captions uses native parquet and works once you authenticate — see the Setup section.)*
+**Goal**: train a real text-to-image DiT — pretrained CLIP text encoder + pretrained SD-VAE + the lab 3.1 DiT architecture (with cross-attention added) — on **`diffusers/pokemon-gpt4-captions`**: 833 Pokemon images with GPT-4-generated captions like *"a cute drawing of a green and pink pokemon with large eyes and a curled tail"*. 833 pairs is tiny by production standards, but the captions are real, attribute-dense natural language — color, shape, feature, and pose words across hundreds of Pokemon designs — so the text encoder is doing real work, not class lookup. End-to-end "type a prompt, get an image." This is the SD3 / FLUX recipe at small scale, applied to a laptop-friendly dataset. *(MS-COCO would be the canonical choice, but the popular HF COCO-captions datasets all use script-based loaders that the current `datasets` library refuses; the diffusers mirror uses native parquet and downloads without auth.)*
 
 **Why this matters for DiT**: this is the first lab where everything is *production-shape*. Pretrained text encoder, pretrained VAE, learned DiT in the middle, flow matching as the training paradigm, CFG for conditioning strength — exactly the stack that runs in production text-to-image. Lab 3.1 verified the DiT architecture in isolation; this lab puts it inside the actual production pipeline.
 
@@ -77,7 +77,7 @@ The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct na
 | --- | --- |
 | `vae.py` | Pretrained SD-VAE (`stabilityai/sd-vae-ft-mse`) wrapper: `.encode(image) → latent`, `.decode(latent) → image`. Includes the standard 0.18215 scale factor. |
 | `text_encoder.py` | Pretrained CLIP text encoder (`openai/clip-vit-base-patch32`) wrapper. Returns per-token outputs (for cross-attention), pooled output (for AdaLN), and attention mask. |
-| `data.py` | `lambdalabs/pokemon-blip-captions` (833 image-caption pairs) loaded via HuggingFace `datasets`, center-cropped + resized to 64×64. |
+| `data.py` | `diffusers/pokemon-gpt4-captions` (833 image-caption pairs) loaded via HuggingFace `datasets`, center-cropped + resized to 64×64. |
 | `dit.py` | DiT with `SelfAttention` + `CrossAttention` + `MLP` per block. `TextProjector` (replaces `LabelEmbedder`) and `TextTokenProjector` for the two text-conditioning paths. |
 | `flow.py` | Flow matching `fm_q_sample` and `fm_euler_sample`, signature adapted for text inputs. |
 | `train.py` | Training loop. Encodes images via VAE and captions via CLIP at each step (pretrained, no_grad), trains DiT on the velocity-prediction objective. |
@@ -95,26 +95,11 @@ pip install -r requirements.txt
 First run downloads three models from HuggingFace (cached at `~/.cache/huggingface/`):
 - **SD-VAE**: ~335 MB
 - **CLIP text encoder**: ~250 MB
-- **Pokemon BLIP captions** (`lambdalabs/pokemon-blip-captions`): ~85 MB for 833 image-caption pairs (**gated**; see auth steps below)
+- **Pokemon GPT-4 captions** (`diffusers/pokemon-gpt4-captions`): ~85 MB for 833 image-caption pairs
 
-### HuggingFace authentication
+All three are public — no HuggingFace authentication required.
 
-`lambdalabs/pokemon-blip-captions` is a gated dataset on the HuggingFace Hub — the first download requires you to authenticate and accept the dataset's terms. One-time setup:
-
-1. **Get a token.** Create a read-scope token at https://huggingface.co/settings/tokens. Copy the `hf_...` string.
-2. **Accept the dataset terms.** Visit https://huggingface.co/datasets/lambdalabs/pokemon-blip-captions while logged in and click "Agree and access repository." Without this step the token alone won't work — Hub gates are per-dataset.
-3. **Authenticate locally.** Two equivalent options:
-
-   ```bash
-   # Option A — interactive (writes the token to ~/.cache/huggingface/token):
-   pip install huggingface_hub
-   huggingface-cli login          # paste the token when prompted
-
-   # Option B — env var (good for one-off shells / CI):
-   export HF_TOKEN=hf_...         # the token from step 1
-   ```
-
-After that, `python train.py` downloads the dataset normally. The two pretrained model checkpoints (SD-VAE, CLIP) aren't gated — they download without auth.
+> **If you do hit a gated/auth error** (HF policies change occasionally for any dataset), the fix is: create a read-scope token at https://huggingface.co/settings/tokens, click "Agree and access repository" on the dataset's page, then either run `huggingface-cli login` (interactive) or `export HF_TOKEN=hf_...` before `python train.py`.
 
 ## Train
 

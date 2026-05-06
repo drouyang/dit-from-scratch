@@ -1,24 +1,16 @@
 """Tiny image-caption loader for text-to-image training.
 
-We use `lambdalabs/pokemon-blip-captions` — 833 Pokemon images with
-BLIP-generated captions like *"a drawing of a green pokemon with red eyes"*.
-Tiny (~85 MB), parquet-formatted (fast to load on current `datasets`
-versions), and the captions are diverse enough that the text encoder is
-doing real work — the model has to learn how individual color, shape, and
-feature words map to image regions.
+We use `diffusers/pokemon-gpt4-captions` — 833 Pokemon images with
+GPT-4-generated captions like *"a cute drawing of a green and pink pokemon
+with large eyes and a curled tail"*. Tiny (~85 MB), parquet-formatted (no
+script-loader issues with current `datasets`), captions are richer and
+more attribute-dense than BLIP's, so cross-attention has more word-level
+signal to learn from.
 
 Why not raw MS-COCO: the canonical COCO captions datasets on HuggingFace
 use *script-based* loaders that the current `datasets` library refuses
-("Dataset scripts are no longer supported"). Pokemon-blip-captions uses
+("Dataset scripts are no longer supported"). The diffusers mirror uses
 native parquet, so it works without library version juggling.
-
-Authentication note: `lambdalabs/pokemon-blip-captions` is a *gated* dataset
-on HuggingFace. To download it the first time you need to:
-    1. Create an HF token at https://huggingface.co/settings/tokens
-    2. Visit https://huggingface.co/datasets/lambdalabs/pokemon-blip-captions
-       and accept the dataset's access terms.
-    3. Authenticate locally: either run `huggingface-cli login` (interactive),
-       or export `HF_TOKEN=hf_...` in your shell before running `python train.py`.
 
 Pedagogically the same as COCO at this scale: real natural-language captions,
 the model learns color/shape/feature words → image-region mappings.
@@ -36,8 +28,20 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 
 
+def _extract_caption(ex):
+    """Find the caption field in a sample, regardless of which name the
+    dataset uses (`caption` / `text` / `prompt` / `en` are all common)."""
+    for key in ("caption", "text", "prompt", "en"):
+        v = ex.get(key)
+        if isinstance(v, str) and v:
+            return v
+        if isinstance(v, list) and v:
+            return v[0] if isinstance(v[0], str) else (v[0].get("raw") or v[0].get("text", ""))
+    return ""
+
+
 class TinyDataset(Dataset):
-    """Pokemon BLIP captions — small image-caption set for text-to-image.
+    """Pokemon GPT-4 captions — small image-caption set for text-to-image.
 
     Args:
         n_samples: cap on the number of images. Source has 833 total.
@@ -46,7 +50,7 @@ class TinyDataset(Dataset):
 
     def __init__(self, n_samples=833, image_size=64):
         from datasets import load_dataset
-        ds = load_dataset("lambdalabs/pokemon-blip-captions", split="train")
+        ds = load_dataset("diffusers/pokemon-gpt4-captions", split="train")
         n = min(n_samples, len(ds))
         self.samples = [ds[i] for i in range(n)]
 
@@ -66,7 +70,7 @@ class TinyDataset(Dataset):
         if img.mode != "RGB":
             img = img.convert("RGB")
         x = self.transform(img)
-        caption = ex["text"]   # single BLIP-generated caption per image
+        caption = _extract_caption(ex)
         return x, caption
 
 

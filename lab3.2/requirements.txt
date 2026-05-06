@@ -6,8 +6,9 @@ matplotlib>=3.7
 # Pretrained models
 diffusers>=0.27        # SD-VAE encoder/decoder via AutoencoderKL
 transformers>=4.40     # CLIP text encoder + tokenizer
+accelerate>=0.27       # low_cpu_mem_usage init path used by diffusers/transformers
 safetensors>=0.4       # checkpoint loading
 
 # Dataset
-datasets>=2.18         # tiny COCO subset via HuggingFace datasets
+datasets>=2.18         # Pokemon GPT-4 captions via HuggingFace datasets
 Pillow>=10
