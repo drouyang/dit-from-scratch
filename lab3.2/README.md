@@ -43,19 +43,7 @@ Decoupling the three modalities is what makes scale-up tractable:
    FROZEN           FROZEN              (image-latent, text-embedding) pairs
 ```
 
-**What "FROZEN" means.** The VAE and text encoder run *only* forward — no gradient flows back into them, no optimizer state, no parameter updates. Concretely, in the training loop:
-
-```python
-with torch.no_grad():                                # explicit: no gradient graph built
-    z_0 = vae.encode(images)                         # 84M-param model used as a feature extractor
-    text_tokens, text_pooled, _ = text_enc.encode(captions, device)
-# only the DiT below has trainable parameters
-pred = dit(z_t, t, text_tokens, text_pooled, ...)
-loss = (pred - target_v).pow(2).mean()
-loss.backward()                                      # gradients flow only through DiT
-```
-
-Their weights stay bit-for-bit identical to the HuggingFace checkpoint from the first step to the last. They're feature extractors, not trainable layers — same role as a frozen ResNet backbone in detection, or a frozen embedding table in retrieval.
+"FROZEN" means the VAE and text encoder run *only* forward — no gradient flows back into them, no optimizer state, no parameter updates. Their weights stay the same from the first step to the last.
 
 The DiT learns to navigate the *fixed* latent space defined by SD-VAE, conditioned on the *fixed* text representation from CLIP. If you trained them jointly, every DiT experiment would also need to budget VAE + text-encoder retraining — that kills iteration speed. By freezing, every change is local to the DiT.
 
