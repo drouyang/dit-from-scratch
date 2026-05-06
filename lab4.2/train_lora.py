@@ -22,10 +22,11 @@ End-to-end:
 Read the README first — it covers what LoRA actually is, which target
 modules to wrap, and how to choose rank / alpha / lr.
 
-Compute budget: this fits on a single 80 GB H100 with bf16 + gradient
-checkpointing at 480p × 33 frames, batch 1. Smaller GPUs need lower
-resolution / fewer frames / a smaller WAN variant. See the README's
-"Hardware" section.
+Compute budget: defaults are sized for a single 4090 (24 GB) with bf16,
+gradient checkpointing, 17 frames @ 256×256, batch 1, grad-accum 8.
+The same config scales linearly across multiple 4090s via accelerate's
+DDP — 4× 4090 cuts wall-clock by ~4×. See the README's "Hardware"
+section to scale up to higher resolution / more frames on H100 / A100.
 
 Run:
     accelerate launch train_lora.py \\
@@ -73,14 +74,20 @@ def parse_args():
     p.add_argument("--output-dir",      required=True)
     p.add_argument("--steps",           type=int,   default=2000)
     p.add_argument("--batch-size",      type=int,   default=1)
-    p.add_argument("--grad-accum",      type=int,   default=4)
+    p.add_argument("--grad-accum",      type=int,   default=8)
     p.add_argument("--lr",              type=float, default=1e-4)
     p.add_argument("--rank",            type=int,   default=16)
     p.add_argument("--alpha",           type=int,   default=16,
                    help="LoRA scaling factor; effective scale = alpha/rank")
-    p.add_argument("--n-frames",        type=int,   default=33)
-    p.add_argument("--height",          type=int,   default=480)
-    p.add_argument("--width",           type=int,   default=832)
+    # Defaults sized for a single 4090 (24 GB) with gradient checkpointing.
+    # 17 frames = 4*4 + 1 — matches Wan-VAE's 4× temporal compression pattern.
+    p.add_argument("--n-frames",        type=int,   default=17)
+    p.add_argument("--height",          type=int,   default=256)
+    p.add_argument("--width",           type=int,   default=256)
+    p.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="Trade recompute for VRAM; required to fit a 4090. "
+                        "Disable with --no-gradient-checkpointing on H100/A100.")
     p.add_argument("--save-every",      type=int,   default=500)
     p.add_argument("--seed",            type=int,   default=0)
     return p.parse_args()
@@ -127,6 +134,14 @@ def main():
     )
     transformer.add_adapter(lora_config)
     transformer.train()
+
+    # Gradient checkpointing trades activation memory for recompute. With
+    # PEFT-wrapped models, also flip on input_require_grads so the recompute
+    # graph extends through the (frozen) base — without this, autograd thinks
+    # the base has nothing to backprop and the LoRA grads come back zero.
+    if args.gradient_checkpointing:
+        transformer.enable_gradient_checkpointing()
+        transformer.enable_input_require_grads()
 
     # Sanity: only LoRA params should be trainable.
     n_trainable = sum(p.numel() for p in transformer.parameters() if p.requires_grad)

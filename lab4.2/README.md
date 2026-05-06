@@ -75,15 +75,22 @@ Things you don't typically wrap with LoRA:
 
 ### Hardware
 
-| GPU | What works |
-|---|---|
-| H100 80 GB | 480p × 33 frames, batch 1, grad-accum 4 — recommended |
-| A100 80 GB | same as H100, slightly slower |
-| A100 40 GB | 360p × 25 frames, batch 1, grad-accum 4 |
-| 4090 24 GB | 256p × 17 frames, gradient checkpointing on, batch 1, grad-accum 8 — feasible but tight |
-| MacBook M3 | inference only — *don't* try to LoRA-train a 1.3B video DiT on MPS |
+The lab's defaults are sized to fit a **single 4090 (24 GB)** at 256 × 256 × 17 frames with gradient checkpointing. Scale up if you have more compute.
 
-Easiest path: rent an H100 from Lambda / Vast / RunPod for a few hours (~$2–4/hr at the time of writing). 2000 steps at the recommended config is ~3–4 hours of wall clock.
+| GPU | What fits | Wall clock @ 2000 steps |
+|---|---|---|
+| **1× 4090 24 GB** (lab default) | 256×256 × 17 frames, batch 1, grad-accum 8, gradient checkpointing **on** | ~6–8 hours |
+| **4× 4090 24 GB** (DDP) | same per-GPU config; effective batch = 32 | ~1.5–2 hours |
+| A100 40 GB | 384×384 × 17 frames, batch 1, grad-accum 8 | ~3–4 hours |
+| A100 80 GB | 480p × 25 frames, batch 1, grad-accum 4, can drop gradient-checkpointing | ~2–3 hours |
+| H100 80 GB | 480p × 33 frames, batch 1, grad-accum 4, can drop gradient-checkpointing | ~1.5–2.5 hours |
+| MacBook M3 | inference only — *don't* try to LoRA-train a 1.3B video DiT on MPS | — |
+
+**Default config rationale.** 17 = 4·4 + 1 lines up with Wan-VAE's 4× temporal compression (it expects an "anchor frame" plus multiples of 4). 256×256 lines up with WAN's 8× spatial compression. Gradient checkpointing trades a ~30% wall-clock hit for the activation memory needed to fit the 24GB budget.
+
+**Going multi-GPU.** `accelerate launch` automatically uses every visible GPU via DDP — no code change needed. On 4× 4090, you'll see effective batch size = `1 (batch) × 8 (grad-accum) × 4 (GPUs) = 32`. Wall-clock divides almost linearly.
+
+**Easiest path**: rent a single 4090 from Vast / RunPod (~$0.40–0.80/hr) for an overnight run, or 4× 4090 / 1× H100 if you want sub-2-hour iteration.
 
 ### Setup
 
@@ -134,8 +141,9 @@ Hyperparameters worth understanding before you tune them:
 | `--alpha` | 16 | Scaling factor; effective contribution = `α/r`. Setting `alpha == rank` keeps the scale at 1.0. Some authors use `alpha = 2*rank` for more aggressive adaptation. |
 | `--lr` | 1e-4 | Learning rate for the LoRA params. ~10× higher than what you'd use for full fine-tuning (LoRA params are randomly initialized and small). |
 | `--steps` | 2000 | Total optimization steps. Style LoRAs converge in 1k–3k; character LoRAs need 2k–5k. Watch the loss curve — usually plateaus before overfitting kicks in. |
-| `--n-frames`, `--height`, `--width` | 33, 480, 832 | Per-clip dimensions. Lower these for smaller GPUs. Lower spatial resolution hurts quality more than fewer frames. |
-| `--grad-accum` | 4 | Effective batch size = `batch_size * grad_accum * num_gpus`. With batch 1, that's 4. Higher = smoother gradient but more wall-clock. |
+| `--n-frames`, `--height`, `--width` | 17, 256, 256 | Per-clip dimensions. Sized for 4090; raise on bigger GPUs (see the Hardware table). Lower spatial resolution hurts quality more than fewer frames; if you have headroom, prefer raising `--height` / `--width` over `--n-frames`. |
+| `--gradient-checkpointing` | on | Trades ~30% wall clock for activation memory; required to fit a 4090. Pass `--no-gradient-checkpointing` to disable on H100 / A100. |
+| `--grad-accum` | 8 | Effective batch size = `batch_size * grad_accum * num_gpus`. On 1× 4090 that's 8; on 4× 4090 that's 32. Higher = smoother gradient but more wall-clock. |
 
 You'll see logs like:
 
