@@ -2,23 +2,7 @@
 
 **Goal**: load **WAN 2.1 T2V-1.3B**, generate a 3-second video from a text prompt, and trace every component of the running system back to a lab from Parts 1–3. By the end you can open `Wan-Video/Wan2.1`'s source and recognize patchify, AdaLN-Zero, RoPE, cross-attention, flow matching, CFG — exactly the building blocks you wrote yourself, just extended to one more dimension.
 
-## Hardware
-
 WAN 2.1 T2V-1.3B is the smallest official WAN checkpoint (~1.3B params); inference fits comfortably on a single 4090 (24 GB), with VRAM to spare.
-
-| Path | Hardware | Notes |
-|---|---|---|
-| **diffusers `WanPipeline`** | 1× 4090 (or 12 GB+ consumer GPU) | Cleanest API; recommended for the code tour |
-| **Official `Wan-Video/Wan2.1`** | 1× 4090 | Production codebase; what the call-path tour points into |
-
-For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 for ~10 minutes.
-
-## Files
-
-| File | What it is |
-|---|---|
-| `inference_diffusers.py` | Thin wrapper around diffusers' `WanPipeline` — text prompt → mp4. ~50 lines. |
-| `requirements.txt` | `torch`, `diffusers>=0.36` (stable), `accelerate`, `transformers`, `imageio[ffmpeg]` |
 
 ## Setup
 
