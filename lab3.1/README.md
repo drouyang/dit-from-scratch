@@ -29,17 +29,26 @@ x ─┬─► LN ─► MHA ─┐ ┌─► LN ─► MLP ─┐
 A DiT block adds `c`-driven modulation around each sublayer's LN, gates each sublayer's residual contribution, and rotates Q/K inside MHA via RoPE:
 
 ```
-x ─┬─► LN ─► mod(s_a,sc_a) ─► MHA+RoPE ─► × g_a ─┐ ┌─► LN ─► mod(s_m,sc_m) ─► MLP ─► × g_m ─┐
-   │                                             ▼ │                                       ▼
-   └───────────────────────────────────────────►⊕─┴──────────────────────────────────────►⊕─► out
-        ▲                                          ▲
-        │                                          │
-        └─── (s_a, sc_a, g_a, s_m, sc_m, g_m) = adaLN_modulation(c)
+x ─┬─► LN ─► modulate(shift_a, scale_a) ─► MHA+RoPE ─► × gate_a ─┐ ┌─► LN ─► modulate(shift_m, scale_m) ─► MLP ─► × gate_m ─┐
+   │                                                              ▼ │                                                        ▼
+   └────────────────────────────────────────────────────────────►⊕─┴──────────────────────────────────────────────────────►⊕─► out
+              ▲                                                                       ▲
+              │                                                                       │
+              └─── shift_a, scale_a, gate_a, shift_m, scale_m, gate_m = adaLN_modulation(c)
+                                                                        │
+                                                                        └── = Linear( SiLU(c) )    ← Linear is zero-initialized
+```
+
+In code, each sublayer is two steps — **predict** the modulation parameters from `c`, then **apply** them to the activations:
+
+```python
+shift, scale, gate, ... = adaLN_modulation(c).chunk(6, dim=-1)   # predict
+y = x + gate * sublayer(modulate(LN(x), shift, scale))           # apply
 ```
 
 Same backbone (pre-norm + residual around two sublayers), three new things:
 
-- **`mod(shift, scale)` inside the LN path** — vanilla LN's affine replaced by per-`c` shift+scale.
+- **`modulate(shift, scale)` inside the LN path** — vanilla LN's affine replaced by per-`c` shift+scale.
 - **`× gate` on the residual** — each sublayer's contribution is gated by a per-`c` scalar; zero-init means blocks start as identity.
 - **`MHA+RoPE`** — Q and K get rotated by their (h, w) position before the dot product, so attention sees relative position with zero added parameters.
 
