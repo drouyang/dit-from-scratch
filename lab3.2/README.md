@@ -34,7 +34,7 @@ Cross-attention is unmodulated (no AdaLN gating around it) — the text tokens a
 
 ### Why frozen pretrained VAE + text encoder
 
-**Latent space is task-agnostic.** SD-VAE's latent encodes natural images; CLIP's text encoder encodes natural language. Neither is specific to our text-to-image task — they're general-purpose pretrained backbones, the same reuse pattern vision and NLP have relied on for years. SD-VAE was trained on a curated LAION subset (hundreds of millions of images, perceptual + adversarial losses); CLIP saw 400M (text, image) pairs. We can't replicate either at lab scale, so reusing their checkpoints is the only sensible choice.
+**Latent space is task-agnostic.** SD-VAE's latent encodes natural images; CLIP's text encoder maps natural language into a vision-aligned space (CLIP was trained jointly with an image encoder, so its text vectors already carry visual semantics — that's why it's preferred over a pure language model like BERT for text-to-image). Neither is specific to our text-to-image task — they're general-purpose pretrained backbones, the same reuse pattern vision and NLP have relied on for years. SD-VAE was trained on a curated LAION subset (hundreds of millions of images, perceptual + adversarial losses); CLIP saw 400M (text, image) pairs. We can't replicate either at lab scale, so reusing their checkpoints is the only sensible choice.
 
 **Decoupling makes scale-up tractable.**
 
