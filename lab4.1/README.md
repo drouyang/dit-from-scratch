@@ -123,14 +123,3 @@ After reading the tour:
 - [ ] Find `rope_apply()` and confirm three concatenated rotation bands. Compare against lab 3.1's `apply_rope()` (which has two: row + column).
 
 If you can do these three things, you've completed the lab.
-
-## What you've now built end-to-end
-
-```
-Part 1: MLP, attention, transformer block          (lab 1.1, 1.3, 1.4)
-Part 2: VAE, flow matching, CFG                    (lab 2.1, 2.2)
-Part 3: DiT architecture (lab 3.1) → text-to-image (lab 3.2)
-Part 4.1: same recipe in production at scale       (WAN 2.2 video — this lab)
-```
-
-Lab 4.2 will fine-tune WAN with LoRA on a custom dataset; lab 4.3 will deploy.
