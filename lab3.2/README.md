@@ -32,6 +32,10 @@ x = x + gate * mlp(AdaLN(x, c))                 ← MLP (lab 3.1)
 
 Cross-attention is unmodulated (no AdaLN gating around it) — the text tokens already carry conditioning information through their values.
 
+**Why cross-attention.** Pooling the entire prompt to a single vector loses too much information. "A red car" and "a car" produce nearly identical pooled vectors after CLIP's pooler, but they should produce visibly different images. Per-token cross-attention preserves the word-level structure: the model can route the "red" token's information to color decisions and the "car" token's information to shape decisions independently.
+
+This is why every modern text-to-image model uses some form of per-token text conditioning (cross-attention in SD1.x/SDXL, MMDiT joint attention in SD3 / FLUX). Pooled-only conditioning would be a strict downgrade.
+
 ### Why frozen pretrained VAE + text encoder
 
 **Latent space is task-agnostic.** SD-VAE's latent encodes natural images; CLIP's text encoder maps natural language into a vision-aligned space (CLIP was trained jointly with an image encoder, so its text vectors already carry visual semantics — that's why it's preferred over a pure language model like BERT for text-to-image). Neither is specific to our text-to-image task — they're general-purpose pretrained backbones, the same reuse pattern vision and NLP have relied on for years. SD-VAE was trained on a curated LAION subset (hundreds of millions of images, perceptual + adversarial losses); CLIP saw 400M (text, image) pairs.
@@ -65,9 +69,7 @@ Same architecture, very different parameter counts and data:
 
 The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct natural images cleanly, so production keeps it small. Almost all the production scale-up went into the DiT itself and into a much larger text encoder stack (T5-XXL alone is ~11B params, dwarfing everything else combined).
 
-**Why cross-attention.** Pooling the entire prompt to a single vector loses too much information. "A red car" and "a car" produce nearly identical pooled vectors after CLIP's pooler, but they should produce visibly different images. Per-token cross-attention preserves the word-level structure: the model can route the "red" token's information to color decisions and the "car" token's information to shape decisions independently.
 
-This is why every modern text-to-image model uses some form of per-token text conditioning (cross-attention in SD1.x/SDXL, MMDiT joint attention in SD3 / FLUX). Pooled-only conditioning would be a strict downgrade.
 
 ## Files
 
