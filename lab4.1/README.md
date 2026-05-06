@@ -13,8 +13,6 @@ WAN 2.1 T2V-1.3B is the smallest official WAN checkpoint (~1.3B params); inferen
 
 For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 (or any consumer GPU with 12+ GB) for ~10 minutes.
 
-> **Why WAN 2.1 over WAN 2.2 in this lab.** WAN 2.2 ships in two flavors — TI2V-5B (5B dense) and A14B (27B-total / 14B-activated MoE). The 5B model needs ~24 GB VRAM with offload, A14B needs B200/H200-class GPUs, and `WanPipeline` for 2.2 only lives in `diffusers` from-source as of mid-2026. The 1.3B WAN 2.1 fits a 4090 cleanly, is in stable diffusers (≥0.36), and uses the **same call path** as 2.2 (the official repos share `wan/modules/{model,t5,vae}.py` structurally). Once you understand 2.1's flow, scaling up to 2.2 / A14B is a model-id swap plus a bigger GPU budget — covered in the lab-vs-production table in lab 3.2.
-
 ## Files
 
 | File | What it is |
