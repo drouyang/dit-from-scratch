@@ -2,7 +2,7 @@
 
 **Goal**: load **WAN 2.1 T2V-1.3B**, generate a 3-second video from a text prompt, and trace every component of the running system back to a lab from Parts 1–3. By the end you can open `Wan-Video/Wan2.1`'s source and recognize patchify, AdaLN-Zero, RoPE, cross-attention, flow matching, CFG — exactly the building blocks you wrote yourself, just extended to one more dimension.
 
-## Compute reality
+## Hardware
 
 WAN 2.1 T2V-1.3B is the smallest official WAN checkpoint (~1.3B params); inference fits comfortably on a single 4090 (24 GB), with VRAM to spare.
 
