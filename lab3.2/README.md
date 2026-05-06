@@ -22,8 +22,6 @@ The DiT itself doesn't know it's operating on latents — it just sees a `(B, 4,
 - **AdaLN-Zero needs a single per-prompt vector.** We use CLIP's **pooled** output (B, 512) in the modulation: `c = t_embed(t) + text_proj(pooled)`.
 - **Attribute binding needs word-level structure.** Pooled collapses too much: "a red car" and "a blue car" produce nearly identical pooled vectors, so the model can't reliably tie "red" to the car. CLIP's **per-token** outputs (B, 77, 512) preserve the structure. We feed them as keys/values into a new **cross-attention** sublayer in each DiT block, where image patches (queries) decide locally which words to listen to.
 
-CLIP gives us both forms in one forward pass, but the *reason* we use both is that neither alone is enough — pooled-only loses attribute binding; per-token-only loses the AdaLN-Zero modulation channel.
-
 So each DiT block now has three sublayers instead of two:
 
 ```
