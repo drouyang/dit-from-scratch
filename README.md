@@ -62,9 +62,9 @@ A deliberate shape change: the labs above are *build from scratch*; these are *r
 |---|---|---|
 | 4.1 | WAN inference + code tour | [lab4.1](./lab4.1) |
 | 4.2 | Post-training WAN — hands-on LoRA fine-tune (rented GPU), survey of full SFT / Diffusion-DPO / distillation | [lab4.2](./lab4.2) |
-| 4.3 | Deployment — quantized inference, ComfyUI custom node | [lab4.3](./lab4.3) |
+| 4.3 | Distribution — publish your LoRA, ComfyUI custom node, quantization | [lab4.3](./lab4.3) |
 
-Compute notes: 4.1 runs on M3 with quantization (or rented GPU for full precision); 4.2 needs a rented H100 / A100 for a few hours; 4.3 is cloud deployment.
+Compute notes: 4.1 runs on M3 with quantization (or rented GPU for full precision); 4.2 needs a rented H100 / A100 for a few hours; 4.3 is laptop-only.
 
 ## Reference Library
 
