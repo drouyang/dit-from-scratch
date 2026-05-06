@@ -55,7 +55,7 @@ A deliberate shape change: the labs above are *build from scratch*; these are *r
 
 ## After the labs
 
-For GPU/HPC engineers continuing into video-DiT efficiency work, [`EFFICIENCY.md`](./EFFICIENCY.md) is a curated reading list — production parallelism (FSDP-2, Ring Attention, xfuser), VAE latent caching, distillation (LCM/DMD/Lightning), quantization, and the production codebases worth reading.
+[`EFFICIENCY.md`](./EFFICIENCY.md) is a curated reading list about production parallelism (FSDP-2, Ring Attention, xfuser), VAE latent caching, distillation (LCM/DMD/Lightning), quantization, etc.
 
 ## Reference Library
 
