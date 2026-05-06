@@ -251,7 +251,7 @@ self.adaLN_modulation = nn.Sequential(
 )
 ```
 
-The lab 1.1 pattern (sinusoidal time → MLP) shows up here too: the conditioning vector `c` is an MLP output, and another linear inside each block decodes it into modulation parameters. Counting MLPs in DiT: one for the time embedder, one for `adaLN_modulation` per block, and the FFN inside each block. Every one of them is the pattern from lab 1.1.
+Lab 2.2's `sinusoidal_time_embed → MLP → t_emb` pattern shows up here in the time half of `c`; the class half is a learned embedding lookup. `adaLN_modulation` is itself a small MLP-style module (`SiLU → Linear`) that decodes `c` into modulation parameters per block. Counting MLPs / Linear stacks in DiT: one for the time embedder, one for `adaLN_modulation` per block, and the FFN inside each block — every one of them is built from the same `Linear → nonlinearity → Linear` pattern lab 1.1 introduced.
 
 ### 3. RoPE-2D — relative position, applied inside attention
 
