@@ -53,6 +53,10 @@ A deliberate shape change: the labs above are *build from scratch*; these are *r
 | 4.2 | Post-training WAN — hands-on LoRA fine-tune, survey of full SFT / Diffusion-DPO / distillation | [lab4.2](./lab4.2) |
 | 4.3 | Distribution — publish your LoRA, ComfyUI custom node, quantization | [lab4.3](./lab4.3) |
 
+## After the labs
+
+For GPU/HPC engineers continuing into video-DiT efficiency work, [`EFFICIENCY.md`](./EFFICIENCY.md) is a curated reading list — production parallelism (FSDP-2, Ring Attention, xfuser), VAE latent caching, distillation (LCM/DMD/Lightning), quantization, and the production codebases worth reading.
+
 ## Reference Library
 
 - [DiT paper (Peebles & Xie 2022)](https://arxiv.org/abs/2212.09748) — the architecture this course builds toward.
