@@ -45,7 +45,7 @@ Put it together.
 
 ## Part 4 — Video DiT in Production (~12-18 hours)
 
-A deliberate shape change: the labs above are *build from scratch*; these are *read, run, modify, and serve a real production codebase*. The target is the [Wan-Video](https://github.com/Wan-Video) family — state-of-the-art open **video** DiT models (text-to-video and image-to-video). Lab 4.1 onward uses **WAN 2.1 T2V-1.3B** as the working model since it fits a 4090 cleanly; the lab-vs-production-scale table in lab 3.2 covers how the same architecture extends to WAN 2.2 (TI2V-5B, A14B MoE) at production scale.
+The target is the [Wan-Video](https://github.com/Wan-Video) family — state-of-the-art open **video** DiT models (text-to-video and image-to-video). Lab 4.1 onward uses **WAN 2.1 T2V-1.3B** as the working model since it fits a 4090 cleanly; the lab-vs-production-scale table in lab 3.2 covers how the same architecture extends to WAN 2.2 (TI2V-5B, A14B MoE) at production scale.
 
 Going from image to video is a small dimensional extension, not a redesign — the 2D VAE becomes a 3D causal VAE producing `(C, T, H, W)` latents, patchify and RoPE pick up a temporal axis, compute jumps ~10×, and everything else (DiT block, AdaLN-Zero, flow matching, CFG, text conditioning) carries over unchanged.
 
