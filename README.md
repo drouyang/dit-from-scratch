@@ -43,20 +43,9 @@ Put it together.
 
 3.1 builds and verifies the DiT architecture on raw pixels with class labels. 3.2 is the synthesis: same DiT, but operating on VAE latents and conditioned on text — the full production stack at small scale. At this point you've built every component of a modern image DiT from scratch.
 
-## From image to video — what changes architecturally
-
-Going from a working image DiT (lab 3.2) to a video DiT (production: WAN, LTX, HunyuanVideo) is a small dimensional extension, not a redesign. Four things change; everything else is unchanged:
-
-1. The VAE becomes a **3D causal VAE** that compresses both spatial and temporal axes, producing latents of shape `(C, T, H, W)`. "Causal" in time means future frames don't leak into past frames during encoding.
-2. Patchify becomes **3D patchify** that tokenizes across time as well as space — patch shape `(p_t, p_h, p_w)` instead of `(p_h, p_w)`.
-3. RoPE generalizes to **3D RoPE** for `(t, h, w)` positions — same construction with one more frequency band.
-4. Compute requirements jump 1–2 orders of magnitude — production-scale training needs a cluster, which is why this curriculum doesn't include "build a video DiT from scratch on a laptop." Read WAN's code in Part 4 to see the extensions in production form.
-
-DiT block structure, AdaLN-Zero, flow matching loss, CFG, text conditioning — all carry over unchanged.
-
 ## Part 4 — DiT in Production (~10-15 hours)
 
-A deliberate shape change: the labs above are *build from scratch*; these are *read, run, and modify a real production codebase*. The target is [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) — a state-of-the-art open text-to-video / image-to-video DiT family. After Parts 1–3 you can open WAN's source and recognize every block; this part makes you fluent in working with it, including the 3D-VAE / 3D-patchify / 3D-RoPE extensions described above.
+A deliberate shape change: the labs above are *build from scratch*; these are *read, run, and modify a real production codebase*. The target is [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) — a state-of-the-art open **video** DiT family (text-to-video and image-to-video). Going from image to video is a small dimensional extension, not a redesign — the 2D VAE becomes a 3D causal VAE producing `(C, T, H, W)` latents, patchify and RoPE pick up a temporal axis, compute jumps ~10×, and everything else (DiT block, AdaLN-Zero, flow matching, CFG, text conditioning) carries over unchanged. After Parts 1–3 you can open WAN's source and recognize every block; this part makes you fluent in working with it, including those 3D extensions in production form.
 
 | Module | Topic | Lab |
 |---|---|---|
