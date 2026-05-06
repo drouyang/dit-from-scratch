@@ -179,13 +179,13 @@ Real production SFT runs look like:
 - **Compute**: 8–256× H100 with FSDP for the bigger variants.
 - **Duration**: days to weeks.
 - **LR schedule**: cosine decay, warmup, sometimes a slow LR ramp.
-- **Output**: a checkpoint that *replaces* the base for downstream LoRA / DPO / distillation.
+- **Output**: a checkpoint that *replaces* the base for downstream LoRA fine-tuning.
 
 This lab is the *minimum viable* version of that recipe — same machinery, much smaller scale.
 
 ### Where to go after SFT
 
-The post-training pipeline at scale is usually a chain:
+The minimum-viable post-training chain looks like:
 
 ```
 pretrained base (lab 3.2 vibes, 100M+ clips)
@@ -194,20 +194,13 @@ pretrained base (lab 3.2 vibes, 100M+ clips)
    full SFT (this lab) — domain or quality shift
        │
        ▼
-   Diffusion-DPO — align with subjective preferences
-       │
-       ▼
-   distillation — compress sampling steps for inference latency
-       │
-       ▼
    ship: HF model card + ComfyUI workflow + hosted endpoint (lab 4.4)
 ```
 
-You don't always do every step — small projects do SFT only, or LoRA only. Big production runs (FLUX-pro, the Sora family) chain all four.
+Big production runs add more steps on top, but those are out of scope for this curriculum — they need different infrastructure and are reached for after a model is already shipped with a specific quality or cost complaint.
 
 ### Where to read
 
 - **8-bit AdamW**: [Dettmers et al. 2022](https://arxiv.org/abs/2110.02861). The original 8-bit optimizers paper.
 - **Gradient checkpointing**: [Chen et al. 2016](https://arxiv.org/abs/1604.06174). Older trick, still ubiquitous.
 - **FSDP (when you scale past one GPU's worth of model)**: [Zhao et al. 2023](https://arxiv.org/abs/2304.11277), and HuggingFace's `accelerate` FSDP integration docs.
-- **Diffusion-DPO**: [Wallace et al. 2023](https://arxiv.org/abs/2311.12908). The natural next-step lab if you wanted one.
