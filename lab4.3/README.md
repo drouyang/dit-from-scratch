@@ -1,6 +1,6 @@
 # Module 4.3 — Post-training WAN (LoRA)
 
-**Goal**: take WAN-2.1 T2V-1.3B (the smallest variant of the Wan-Video team's open production text-to-video DiT family) and *post-train* it. Hands-on: LoRA fine-tune it on a tiny custom video-caption set so the model adapts to a new style or concept. Survey: read about — and understand the trade-offs of — the other major post-training flavors that don't fit on a rented single-GPU budget (full SFT, Diffusion-DPO, distillation).
+**Goal**: take WAN-2.1 T2V-1.3B (the smallest variant of the Wan-Video team's open production text-to-video DiT family) and *post-train* it. Hands-on: LoRA fine-tune it on a tiny custom video-caption set so the model adapts to a new style or concept. Survey: read about — and understand the trade-offs of — the other major post-training flavors (full SFT — see lab 4.5 for hands-on; Diffusion-DPO and distillation surveyed here).
 
 **Why this matters for DiT**: post-training is what *every* production model goes through after the initial pretraining run. Pretraining gets you "knows how to make video"; post-training gets you "makes video the way *you* want." For a small team or solo developer, post-training is also the *only* place you have leverage — pretraining a 14B-parameter video model is a $1M+ cluster job, but a LoRA fine-tune of a 1.3B variant fits in $20 of rented H100 time. This lab teaches the cheap, ubiquitous version (LoRA) end-to-end and orients you on the rest of the landscape.
 
@@ -198,8 +198,9 @@ Same loss as LoRA training (flow-matching MSE on velocity), but **all** base par
                   ─────────────         ─────────
 trainable params  ~5–20 M               ~1.3 B (Wan-1.3B)
                                         ~14 B (Wan-2.2 A14B)
-optimizer state   small                 enormous (3× param size for AdamW)
-hardware          1× H100 80 GB         8× H100 with FSDP, or larger
+optimizer state   small                 huge (~10 GB fp32 for 1.3 B; 8-bit Adam helps)
+hardware          1× 4090 24 GB         1× 4090 with 8-bit Adam + GC (1.3 B);
+                                        8× H100 with FSDP for A14B
 artifact size     50–200 MB             5+ GB per checkpoint
 typical use       style / character     production model variants
                   / fan ports           ("WAN-anime", "WAN-realistic")
@@ -207,7 +208,7 @@ typical use       style / character     production model variants
 
 Why production models do full SFT instead of LoRA: the rank-`r` constraint ultimately caps how much the base can change. For a major capability shift (re-aiming the model at a different domain, or substantially upgrading quality), you need the full parameter space. Stability-AI's various SD3 variants, Black-Forest-Labs's FLUX-dev → FLUX-pro, Wan-Lightning all involve full SFT on top of pretrained checkpoints.
 
-The diffusers reference is `diffusers/examples/text_to_video/train_text_to_video_lora.py` (LoRA) and `train_text_to_video.py` (full SFT) — same code shape, just `unet.requires_grad_(False)` becomes `unet.requires_grad_(True)`.
+For hands-on full SFT of WAN-2.1 T2V-1.3B on a 4090 (using 8-bit AdamW + gradient checkpointing to fit), see **lab 4.5**. The diffusers reference is `diffusers/examples/text_to_video/train_text_to_video_lora.py` (LoRA) and `train_text_to_video.py` (full SFT) — same code shape, just `unet.requires_grad_(False)` becomes `unet.requires_grad_(True)`.
 
 ### Diffusion-DPO (preference optimization)
 
