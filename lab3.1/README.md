@@ -35,8 +35,9 @@ x = x + gate_mlp * mlp (modulate(LN(x), shift_mlp, scale_mlp))
 Each sublayer is two steps — **predict** the modulation parameters from `c`, then **apply** them to the activations:
 
 ```python
-shift, scale, gate, ... = adaLN_modulation(c).chunk(6, dim=-1)   # predict
-y = x + gate * sublayer(modulate(LN(x), shift, scale))           # apply
+shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = adaLN_modulation(c).chunk(6, dim=-1)   # predict
+x = x + gate_msa * attn(modulate(LN(x), shift_msa, scale_msa))                                          # apply (sublayer 1)
+x = x + gate_mlp * mlp (modulate(LN(x), shift_mlp, scale_mlp))                                          # apply (sublayer 2)
 ```
 
 Same backbone (pre-norm + residual around two sublayers), three new things:
