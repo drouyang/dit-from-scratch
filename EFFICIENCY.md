@@ -58,33 +58,46 @@ Skip the inference acceleration sections below until you're solid on the paralle
 
 ## Inference acceleration
 
-### Distillation (most leverage for inference cost)
+The runtime layer is GPU-engineer territory: compilation, caching infrastructure, quantization runtime, multi-GPU inference. The *algorithmic* layer (training a faster student via distillation, deciding which features to cache across steps) is ML-engineering work — you cooperate with it but you don't own the recipe. Subsections below are split accordingly; spend the bulk of your time on the first half.
 
-- **[Latent Consistency Models (Luo et al. 2023)](https://arxiv.org/abs/2310.04378)** — the original consistency-distillation for diffusion. Compresses 50-step sampling to 4–8 steps. Read this first.
-- **[DMD / DMD2 (Yin et al. 2024)](https://arxiv.org/abs/2311.18828)** — distribution matching distillation. The current SOTA recipe; often outperforms LCM at the same step count.
-- **[Wan2.2-Lightning](https://huggingface.co/lightx2v/Wan2.2-Lightning)** — official 4-step distilled WAN. Read the model card and (if released) the recipe — it's *the* worked example of "take pretrained WAN, distill to 4 steps without quality collapse."
-- **[Consistency Trajectory Models (Kim et al. 2023)](https://arxiv.org/abs/2310.02279)** — the math underneath what most few-step samplers are doing. Useful background for understanding *why* 4-step distillation works.
+### Runtime — what GPU eng owns
 
-### Sampling-loop optimizations
+#### Compilation & graph capture
 
-- **[DeepCache (Ma et al. 2023)](https://arxiv.org/abs/2312.00858)** — cache UNet block features across consecutive denoising steps. Mostly a UNet trick but the same principle (block-level temporal coherence) applies to DiT.
-- **[TeaCache (Liu et al. 2024)](https://arxiv.org/abs/2411.19108)** — diffusion-specific timestep-embedding-aware caching; designed for DiTs and tested on video models including WAN. Probably the most relevant cached-inference paper for this curriculum.
-- **CUDA graphs for diffusion** — no canonical paper, but **diffusion sampling loops are *the* canonical use case**: same model forward called N times with only `t` changing. Read PyTorch's [CUDA graphs guide](https://pytorch.org/docs/stable/notes/cuda.html#cuda-graphs) and the `torch.compile` "reduce-overhead" mode docs; this is where serious latency wins live.
-- **Cross-attention KV caching** — diffusion has no causal KV cache (non-autoregressive), but the *cross-attention* keys/values from text tokens don't change across sampling steps. Cache them once. Most production pipelines do this; the diffusers source (`WanPipeline.__call__`) is the reference implementation.
+- **[`torch.compile` modes](https://pytorch.org/docs/stable/torch.compiler.html)** — `default` vs `reduce-overhead` vs `max-autotune`. For diffusion sampling loops, `reduce-overhead` (CUDA graphs under the hood) is usually the right choice; `max-autotune` is for "I'm willing to wait 10 minutes for autotuning to save 5% per step."
+- **[CUDA graphs guide (PyTorch)](https://pytorch.org/docs/stable/notes/cuda.html#cuda-graphs)** — diffusion sampling loops are *the* canonical use case for graph capture: same model forward called N times with only `t` changing. Pure runtime work, no model modification.
 
-### Quantization
+#### Cross-attention KV caching
+
+- **Cross-attention KV caching** — diffusion has no causal KV cache (non-autoregressive), but the *cross-attention* keys/values from text tokens don't change across sampling steps. Cache them once. Most production pipelines do this; the diffusers source (`WanPipeline.__call__`) is the reference implementation. Pure runtime change — no model modification, no ML-side decision.
+
+#### Quantization runtime
 
 - **[`bitsandbytes`](https://github.com/bitsandbytes-foundation/bitsandbytes)** — NF4 / int8 / fp4. The HF/diffusers default. CUDA-only.
 - **[`torchao`](https://github.com/pytorch/ao)** — Meta's modern alternative. Better `torch.compile` interop, native PyTorch (no separate ext). int8, fp8, and weight-only paths.
-- **[NVIDIA Transformer Engine — fp8 inference](https://docs.nvidia.com/deeplearning/transformer-engine/)** — the canonical fp8 inference path for Hopper/Blackwell. Different memory/throughput shape than int8 (fp8 keeps dynamic range; int8 needs calibration).
 - **[SmoothQuant (Xiao et al. 2022)](https://arxiv.org/abs/2211.10438)** — activation-aware W8A8. The technique most production int8 deployments use; key insight is that activation outliers concentrate in a few channels and you can pre-shift them into the weights.
 - **[AWQ (Lin et al. 2023)](https://arxiv.org/abs/2306.00978)** — activation-aware W4A16. The 4-bit-weight equivalent of SmoothQuant; what most LLM W4A16 deployments use. Less battle-tested for diffusion/video but the math is general.
 - **[LLM.int8() (Dettmers et al. 2022)](https://arxiv.org/abs/2208.07339)** — the original "8-bit inference for transformers" paper. Read for the outlier-feature mental model that informs SmoothQuant / AWQ.
 
-### Compilation
+#### Multi-GPU inference
 
-- **[`torch.compile` modes](https://pytorch.org/docs/stable/torch.compiler.html)** — `default` vs `reduce-overhead` vs `max-autotune`. For diffusion sampling loops, `reduce-overhead` (CUDA graphs under the hood) is usually the right choice; `max-autotune` is for "I'm willing to wait 10 minutes for autotuning to save 5% per step."
-- **[FlashAttention-3 (Shah et al. 2024)](https://arxiv.org/abs/2407.08608)** — Hopper-async pipelining. You said you're familiar with FA already; FA-3 is the version worth specifically tracking for video DiT (longer sequences benefit more from async).
+Same `xfuser` / Wan2.2 distributed code referenced in the training section is also what runs production multi-GPU inference for the larger WAN variants (Wan-2.2 14B doesn't fit on a single 80 GB GPU at full resolution). Sequence parallelism splits the very long video sequence across N GPUs at inference time; you implement the comm overlap, ML doesn't touch this.
+
+### ML-team-owned algorithm changes (context only, not your day job)
+
+These either train a new model (distillation) or design recipe-level decisions about what features are temporally coherent enough to cache (TeaCache / DeepCache). You implement the runtime hooks ML asks for; you don't pick the recipe. Read once for awareness, deprioritize against the runtime work above.
+
+#### Step distillation
+
+- **[Latent Consistency Models (Luo et al. 2023)](https://arxiv.org/abs/2310.04378)** — original consistency-distillation for diffusion.
+- **[DMD / DMD2 (Yin et al. 2024)](https://arxiv.org/abs/2311.18828)** — distribution matching distillation; current SOTA recipe.
+- **[Wan2.2-Lightning](https://huggingface.co/lightx2v/Wan2.2-Lightning)** — official 4-step distilled WAN.
+- **[Consistency Trajectory Models (Kim et al. 2023)](https://arxiv.org/abs/2310.02279)** — math underneath few-step samplers.
+
+#### Step / feature caching
+
+- **[DeepCache (Ma et al. 2023)](https://arxiv.org/abs/2312.00858)** — cache block features across denoising steps.
+- **[TeaCache (Liu et al. 2024)](https://arxiv.org/abs/2411.19108)** — DiT-specific timestep-aware caching; tested on WAN.
 
 ---
 
@@ -101,18 +114,9 @@ Reading actual production code is often higher-leverage than papers for an HPC e
 
 ---
 
-## Hardware-specific resources
-
-If you're tuning for specific GPUs, these are the canonical references:
-
-- **[NVIDIA H100 architecture whitepaper](https://resources.nvidia.com/en-us-tensor-core)** — async TMA, distributed shared memory (DSMEM), tensor memory accelerator. Knowing what's hardware-native vs emulated changes which tricks work.
-- **[NVIDIA B200 architecture brief](https://www.nvidia.com/en-us/data-center/blackwell-architecture/)** — fp4 support, fp8 throughput improvements over Hopper. Worth tracking even if you're on H100s today.
-
----
-
 ## What's not on this list (deliberate omissions)
 
 - LLM-specific tricks that don't transfer (causal KV cache, speculative decoding) — diffusion is non-autoregressive.
-- Autograd / lower-level kernel writing (Triton, CUTLASS) — important if you write kernels, but the curriculum's audience is one level up; FlashAttention is the only kernel-level thing most application engineers need to deeply understand.
+- Autograd / lower-level kernel writing (Triton, CUTLASS) — important if you write kernels, but the curriculum's audience is one level up.
 - Backend / API serving (Triton Inference Server, vLLM, Modal, Replicate). Per request — explicitly out of scope.
 - Image-only diffusion optimizations (no T axis) — most carry over to video, but you'd find them via the video sources anyway.
