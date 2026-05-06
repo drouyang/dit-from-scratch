@@ -1,0 +1,23 @@
+torch>=2.4
+torchvision>=0.19
+numpy<2.4
+
+# diffusers ships the WanPipeline + WanTransformer3DModel; we use it to
+# load Wan-2.1-T2V-1.3B and to handle the VAE / text encoder forward.
+diffusers>=0.32
+transformers>=4.46
+accelerate>=0.34
+
+# peft owns the LoRA wrapping — adding adapters to a frozen base model,
+# saving/loading just the adapter weights, merging on demand.
+peft>=0.13
+
+# safetensors for the saved LoRA file format (small, fast, mmap-friendly).
+safetensors>=0.4
+
+# Video I/O — decord is fastest; av/moviepy are fallbacks.
+decord>=0.6
+imageio[ffmpeg]>=2.34
+
+# For the sample CLI's mp4 export.
+imageio-ffmpeg>=0.5
