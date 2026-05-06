@@ -20,21 +20,19 @@ Where `c = t_embed(t) + class_embed(y)` is the **conditioning vector** that driv
 
 Lab 1.4's GPT block was:
 
-```
-x ─┬─► LN ─► MHA ─┐ ┌─► LN ─► MLP ─┐
-   │              ▼ │              ▼
-   └─────────────►⊕─┴─────────────►⊕─► out
+```python
+x = x + attn(LayerNorm(x))                    # sublayer 1: multi-head self-attention
+x = x + mlp (LayerNorm(x))                    # sublayer 2: position-wise MLP (FFN)
 ```
 
 A DiT block adds `c`-driven modulation around each sublayer's LN, gates each sublayer's residual contribution, and rotates Q/K inside MHA via RoPE:
 
-```
-x ─┬─► LN ─► modulate(shift_a, scale_a) ─► MHA+RoPE ─► × gate_a ─┐ ┌─► LN ─► modulate(shift_m, scale_m) ─► MLP ─► × gate_m ─┐
-   │                                                              ▼ │                                                        ▼
-   └────────────────────────────────────────────────────────────►⊕─┴──────────────────────────────────────────────────────►⊕─► out
+```python
+x = x + gate_msa * attn(modulate(LN(x), shift_msa, scale_msa))
+x = x + gate_mlp * mlp (modulate(LN(x), shift_mlp, scale_mlp))
 ```
 
-In code, each sublayer is two steps — **predict** the modulation parameters from `c`, then **apply** them to the activations:
+Each sublayer is two steps — **predict** the modulation parameters from `c`, then **apply** them to the activations:
 
 ```python
 shift, scale, gate, ... = adaLN_modulation(c).chunk(6, dim=-1)   # predict
