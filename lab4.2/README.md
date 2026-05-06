@@ -64,13 +64,6 @@ Part 4's compute target — and the lab where it earns its keep. **4× 4090 (96 
 
 CUDA-required for the meaningful optimizations.
 
-## Files
-
-| File | What it is |
-|---|---|
-| `benchmark.py` | Same prompt / seed / steps through stock `diffusers.WanPipeline` (Python) and `sglang generate` (subprocess). Reports wall clock + peak VRAM. |
-| `requirements.txt` | `diffusers>=0.36`, plus a comment with the `uv pip install "sglang[diffusion]" --prerelease=allow` invocation. |
-
 ## Setup
 
 ```bash

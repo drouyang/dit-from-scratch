@@ -82,15 +82,6 @@ Same shape as lab 4.3's table — full SFT just bumps the per-step cost. Part 4'
 
 For this scale of SFT (1.3B model), DDP is the right scaling shape — every GPU keeps a full model copy. **FSDP** (sharding params/grads/optim across GPUs) is what you reach for when even one model copy doesn't fit per GPU; for 1.3B at bf16 + 8-bit Adam that's not the case yet, but it kicks in for 14B (Wan-2.2 A14B) full SFT.
 
-## Files
-
-| File                 | What it is                                                                                                              |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `data.py`            | Same `VideoCaptionDataset` as lab 4.3 — reads `captions.json` + `.mp4` clips, decodes with `decord`.                    |
-| `train_sft.py`       | Full SFT training loop. Drops LoRA, unfreezes the entire transformer, swaps in `bnb.optim.AdamW8bit`.                   |
-| `sample_sft.py`      | Inference CLI. Loads stock WanPipeline, optionally swaps in your trained transformer state dict via `load_state_dict`. |
-| `requirements.txt`   | `diffusers`, `transformers`, `accelerate`, `bitsandbytes`, `decord`.                                                    |
-
 ## Setup
 
 ```bash

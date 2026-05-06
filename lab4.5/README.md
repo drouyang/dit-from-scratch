@@ -228,17 +228,6 @@ Note that **only the transformer is quantized** in this recipe. The VAE and text
 
 For *distributing on HF and pairing with diffusers + LoRA*, `bitsandbytes` via `BitsAndBytesConfig` is the path of least resistance.
 
-## Files
-
-| File | What it is |
-| --- | --- |
-| `quantize.py` | CLI that loads Wan-2.1's transformer with `BitsAndBytesConfig`, saves an NF4/int8 variant, optionally pushes to HF Hub. |
-| `comfy_node/` | Self-contained ComfyUI custom node — drop-in `WanLoraSampler` node that wraps WAN-2.1 + an optional LoRA from a HF repo or local path. Ready to clone into `ComfyUI/custom_nodes/`. |
-| `comfy_node/__init__.py` | Exports the two `NODE_*_MAPPINGS` dicts ComfyUI reads on startup. |
-| `comfy_node/nodes.py` | `WanLoraSampler` class — INPUT_TYPES, RETURN_TYPES, the `generate` method. ~80 lines. |
-| `comfy_node/pyproject.toml` | Manifest for the Comfy Registry (`registry.comfy.org`). |
-| `requirements.txt` | `huggingface_hub` (Path 1), `peft`/`diffusers` (already needed elsewhere), `bitsandbytes` (Path 3, CUDA-only). |
-
 ## Discussion
 
 ### What you've actually shipped

@@ -213,15 +213,6 @@ For hands-on full SFT of WAN-2.1 T2V-1.3B on a 4090 (using 8-bit AdamW + gradien
 
 Re-run *pretraining-style* training (huge data, low learning rate, full parameters) on a domain-specific corpus to shift the model's distribution before any task-specific fine-tune. Most people don't have the data or compute for this.
 
-## Files
-
-| File | What it is |
-| --- | --- |
-| `data.py` | `VideoCaptionDataset` — reads `captions.json` + `.mp4` clips, decodes with `decord`, normalizes to `[-1, 1]`. |
-| `train_lora.py` | LoRA training loop. Loads Wan-2.1 T2V-1.3B, applies a `peft` LoRA config, trains only the adapter weights with flow-matching MSE. |
-| `sample_lora.py` | Inference CLI. Loads WAN base, optionally applies a trained LoRA, generates an `.mp4`. |
-| `requirements.txt` | `diffusers`, `peft`, `accelerate`, `transformers`, `decord`, `safetensors`. |
-
 ## Discussion
 
 ### When to use which post-training
