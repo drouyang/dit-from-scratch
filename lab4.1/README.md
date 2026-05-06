@@ -2,8 +2,6 @@
 
 **Goal**: load **WAN 2.2 TI2V-5B**, generate a 5-second video from a text prompt, and trace every component of the running system back to a lab from Parts 1–3. By the end you can open `Wan-Video/Wan2.2`'s source and recognize patchify, AdaLN-Zero, RoPE, cross-attention, flow matching, CFG — exactly the building blocks you wrote yourself, just extended to one more dimension.
 
-**Why this matters for DiT**: production reading is the goal of Part 4. WAN 2.2 is a state-of-the-art open-weights video DiT. Until now you've *built*; here you *read*. The code is messier than your toy, but the structural backbone is identical — every concept maps to a lab.
-
 ## Compute reality
 
 This is the first lab where M3 isn't the primary target. WAN 2.2 TI2V-5B is a 5B-param video DiT and the validated paths all need a real GPU.
