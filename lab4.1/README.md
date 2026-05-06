@@ -4,8 +4,6 @@
 
 ## Compute reality
 
-Part 4's compute target is a **4× RTX 4090 server**. This lab only needs **1 GPU** (single-GPU inference is enough to run the code-tour exercises and generate a video); the multi-GPU configuration is what makes lab 4.2's sequence-parallelism content hands-on.
-
 WAN 2.1 T2V-1.3B is the smallest official WAN checkpoint (~1.3B params); inference fits comfortably on a single 4090 (24 GB), with VRAM to spare.
 
 | Path | Hardware | Notes |
