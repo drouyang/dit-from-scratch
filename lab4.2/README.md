@@ -1,7 +1,5 @@
 # Module 4.2 — Post-training WAN
 
-> Part 4 — DiT in Production · [DiT from Scratch](../README.md)
-
 **Goal**: take WAN-2.1 T2V-1.3B (the smallest variant of the Wan-Video team's open production text-to-video DiT family) and *post-train* it. Hands-on: LoRA fine-tune it on a tiny custom video-caption set so the model adapts to a new style or concept. Survey: read about — and understand the trade-offs of — the other major post-training flavors that don't fit on a rented single-GPU budget (full SFT, Diffusion-DPO, distillation).
 
 **Why this matters for DiT**: post-training is what *every* production model goes through after the initial pretraining run. Pretraining gets you "knows how to make video"; post-training gets you "makes video the way *you* want." For a small team or solo developer, post-training is also the *only* place you have leverage — pretraining a 14B-parameter video model is a $1M+ cluster job, but a LoRA fine-tune of a 1.3B variant fits in $20 of rented H100 time. This lab teaches the cheap, ubiquitous version (LoRA) end-to-end and orients you on the rest of the landscape.
