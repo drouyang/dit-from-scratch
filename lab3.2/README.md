@@ -1,6 +1,6 @@
 # Module 3.2 — Latent text-to-image DiT
 
-**Goal**: train a real text-to-image DiT on 833 Pokemon images with GPT-4-generated captions like "a cute drawing of a green and pink pokemon with large eyes and a curled tail", with pretrained CLIP text encoder + pretrained SD-VAE + the lab 3.1 DiT architecture (with cross-attention added). End-to-end "type a prompt, get an image." This is the SD3 / FLUX recipe at small scale, applied to a laptop-friendly dataset.
+**Goal**: train a real text-to-image DiT — pretrained CLIP text encoder + pretrained SD-VAE + the lab 3.1 DiT architecture with cross-attention added — on 833 Pokemon images with GPT-4-generated captions like *"a cute drawing of a green and pink pokemon with large eyes and a curled tail"*. End-to-end "type a prompt, get an image": the SD3 / FLUX recipe at small scale.
 
 **Why this matters for DiT**: this is the first lab where everything is *production-shape*. Pretrained text encoder, pretrained VAE, learned DiT in the middle, flow matching as the training paradigm, CFG for conditioning strength — exactly the stack that runs in production text-to-image. Lab 3.1 verified the DiT architecture in isolation; this lab puts it inside the actual production pipeline.
 
@@ -129,6 +129,19 @@ python sample.py --prompt "a blue dragon pokemon with horns" \
 Output: `generated.png` — a grid of decoded images, rows = prompts, cols = `--n-per-prompt`.
 
 CFG scale ~3–7 is the production sweet spot; the same range used by SD3 / FLUX. `cfg-scale 1.0` is the model's natural conditional behavior; `0.0` ignores text entirely (samples from the marginal image distribution).
+
+## Interactive demo
+
+After training, launch the Gradio webapp to play with prompts and CFG live:
+
+```bash
+cd demo
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python app.py   # opens http://127.0.0.1:7860
+```
+
+Type a prompt, drag the CFG / steps / seed sliders, and watch the gallery update. Useful for getting a feel for how prompt phrasing and CFG strength interact — e.g., the same "a green pokemon" at cfg=1 vs cfg=4 vs cfg=7 sweeps from diverse-but-loose to sharp-but-collapsed.
 
 ## What to expect at this scale
 
