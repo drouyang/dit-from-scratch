@@ -101,16 +101,35 @@ That's fine. The lab's goal is to demonstrate the *mechanism* — typing differe
 
 ## Discussion
 
-**Why pretrained components.** Production training pipelines:
+**Why frozen pretrained VAE + text encoder.** Decoupling the three modalities is what makes scale-up tractable:
 
 ```
    Text encoder     SD-VAE              DiT
    ─────────────    ─────────────       ─────────────────
-   pretrained,      pretrained,         trained from scratch on
-   used as-is       used as-is          (image-latent, text-embedding) pairs
+   pretrained       pretrained          trained from scratch on
+   FROZEN           FROZEN              (image-latent, text-embedding) pairs
 ```
 
-Same setup we use here. The DiT learns to navigate the *fixed* latent space defined by SD-VAE, conditioned on the *fixed* text embedding produced by CLIP. Decoupling the modalities is what makes scale-up tractable — you don't have to retrain CLIP or the VAE every time you scale the DiT.
+The DiT learns to navigate the *fixed* latent space defined by SD-VAE, conditioned on the *fixed* text representation from CLIP. If you trained them jointly, every DiT experiment would also need to budget VAE + text-encoder retraining — that kills iteration speed. By freezing, every change is local to the DiT.
+
+Concrete reasons:
+
+1. **Data efficiency.** SD-VAE was trained on a curated LAION subset (hundreds of millions of images, with perceptual + adversarial losses). CLIP saw 400M (text, image) pairs. Our 5K COCO pairs can't begin to match that — using their checkpoints is the only sensible choice.
+2. **Memory and compute.** Frozen modules don't need gradients, optimizer state, or a backward pass. Unfreezing them would roughly triple training cost (forward + backward + Adam state) for no quality gain.
+3. **Latent space is task-agnostic.** SD-VAE's latent encodes "natural images"; CLIP's text encoder encodes "natural language." Neither is specific to text-to-image-on-COCO — they're general-purpose, exactly the kind of pretrained backbone reuse that vision and NLP have done for years.
+4. **Production reality.** SD1.x, SDXL, SD3, FLUX all freeze their VAE and text encoder during DiT training. We're matching the actual recipe.
+
+**Lab vs production scale.** Same architecture, very different parameter counts and data:
+
+| | Lab 3.2 | SD3 / FLUX (production) |
+|---|---|---|
+| VAE | SD-VAE-ft-mse — **84M** params, 4-channel latent | Same SD-VAE family — 84M (sometimes upgraded to 16-channel) |
+| Text encoder | CLIP-base — **120M** params, 512-dim, 77 tokens | CLIP-L + CLIP-G + T5-XXL — together **~12B** params, longer context |
+| DiT | **10M** (8 blocks × 384 hidden) | **2B** (SD3) / **12B** (FLUX) |
+| Training data | **5K** COCO pairs | hundreds of millions of (image, caption) pairs |
+| Training compute | ~hours on a laptop | thousands of A100/H100-hours |
+
+The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct natural images cleanly, so production keeps it small. Almost all the production scale-up went into the DiT itself and into a much larger text encoder stack (T5-XXL alone is ~11B params, dwarfing everything else combined).
 
 **Why cross-attention.** Pooling the entire prompt to a single vector loses too much information. "A red car" and "a car" produce nearly identical pooled vectors after CLIP's pooler, but they should produce visibly different images. Per-token cross-attention preserves the word-level structure: the model can route the "red" token's information to color decisions and the "car" token's information to shape decisions independently.
 
