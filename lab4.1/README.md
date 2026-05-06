@@ -100,18 +100,6 @@ This is structurally identical to lab 3.2's `sample.py`. Only the modalities, re
 | AdaLN-Zero modulation | `wan/modules/model.py` | lab 3.1 (`adaLN_modulation`) | `c → SiLU → Linear` decoded into shift/scale/gate per block | Identical mechanism |
 | CFG | `wan/text2video.py` | lab 2.2 / 3.2 | `v_uncond + s · (v_cond − v_uncond)` | Identical formula |
 
-If everything in this table maps cleanly back to a lab, you have a complete mental model of WAN. The remaining "new" stuff is purely dimensional extensions, documented in the parent README's *From image to video — what changes architecturally* section.
-
-### What's actually new (the 3D extensions)
-
-Three things are *not* in lab 3.2:
-
-1. **3D causal VAE** (`WanVAE`) — encodes a sequence of frames into a `(C, T, H, W)` latent, with causal masking in time so later frames don't peek at earlier ones during reconstruction. Lab 3.2's SD-VAE was 2D image-only.
-2. **3D patchify** — tokenize across time as well as space; patch shape `(p_t, p_h, p_w)` produces tokens of dimension `p_t · p_h · p_w · C`. The implementation is just `Conv3d` instead of `Conv2d`.
-3. **3D RoPE** — three frequency bands, one per axis (t, h, w). Construction is the same as lab 3.1's 2D RoPE, just with one more direction; rotated halves are concatenated.
-
-DiT block, AdaLN-Zero, cross-attention, flow matching, CFG — all unchanged from lab 3.2.
-
 ## Self-check
 
 After reading the tour:
