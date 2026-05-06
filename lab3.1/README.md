@@ -18,14 +18,21 @@
 
 Where `c = t_embed(t) + class_embed(y)` is the **conditioning vector** that drives every LayerNorm in every block.
 
-Lab 1.4's GPT block was:
+Lab 1.4's GPT block vs a DiT block, side by side:
 
 ```python
-x = x + attn(LayerNorm(x))                    # sublayer 1: multi-head self-attention
-x = x + mlp (LayerNorm(x))                    # sublayer 2: position-wise MLP (FFN)
+# lab 1.4 GPT block
+x = x + attn(LayerNorm(x))
+x = x + mlp (LayerNorm(x))
+
+# DiT block
+x = x + gate_msa * attn(AdaLN(x, c))
+x = x + gate_mlp * mlp (AdaLN(x, c))
 ```
 
-A DiT block keeps the same two-sublayer backbone (pre-norm + residual). Per block, **predict** six modulation parameters from `c` once, then **apply** them to gate and modulate both sublayers:
+Two things change visually: `LayerNorm(x)` becomes `AdaLN(x, c)` (now conditioned on `c`), and each residual gets a `gate_* *` prefix.
+
+`AdaLN(x, c)` and the gates aren't literal Python objects — they're shorthand for the same predict-then-apply pattern unfolded:
 
 ```python
 shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = adaLN_modulation(c).chunk(6, dim=-1)   # predict
