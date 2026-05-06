@@ -10,9 +10,8 @@ This is the first lab where M3 isn't the primary target. WAN 2.2 TI2V-5B is a 5B
 |---|---|---|
 | **diffusers `WanPipeline`** | ~24GB VRAM (4090, A100, H100) | Cleanest API; recommended for the code tour |
 | **Official `Wan-Video/Wan2.2`** | ~24GB VRAM with `--offload_model --t5_cpu` | Production codebase; what the call-path tour points into |
-| **ComfyUI + GGUF (community)** | 8GB VRAM, MPS-compatible | Q3_K / Q4_K quantizations runnable on M3, but third-party and significantly slower. No official support. |
 
-For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 / H100 for an hour, or pull the GGUF in ComfyUI on M3 if you accept the speed penalty.
+For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 / H100 for an hour.
 
 ## Files
 
