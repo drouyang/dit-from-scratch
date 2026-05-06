@@ -2,12 +2,6 @@
 
 > Read this after Parts 1–4 of [DiT from Scratch](./README.md).
 
-The curriculum gets you fluent with the *architecture* and the *production stack*. This list is what's worth reading next if your job is making video-DiT training or inference fast — i.e., a GPU/HPC engineer working on real production systems. Curated for relevance over breadth: every entry is something you'd actually open at work, not a comprehensive academic survey.
-
-Filter applied: production usage today, not 2026 research previews. Backend/API-serving topics are deliberately excluded.
-
----
-
 ## Foundational mental models
 
 Read these first if you don't already have a working model of multi-GPU parallelism and activation memory. They underpin everything below.
