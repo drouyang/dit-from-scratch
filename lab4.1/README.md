@@ -4,14 +4,14 @@
 
 ## Compute reality
 
-This is the first lab where M3 isn't the primary target. WAN 2.2 TI2V-5B is a 5B-param video DiT and the validated paths all need a real GPU.
+This is the first lab where M3 isn't the primary target. WAN 2.2 TI2V-5B is a 5B-param video DiT and the validated paths all need a **4090 or better**.
 
 | Path | Hardware | Notes |
 |---|---|---|
-| **diffusers `WanPipeline`** | ~24GB VRAM (4090, A100, H100) | Cleanest API; recommended for the code tour |
-| **Official `Wan-Video/Wan2.2`** | ~24GB VRAM with `--offload_model --t5_cpu` | Production codebase; what the call-path tour points into |
+| **diffusers `WanPipeline`** | 4090 or better (~24GB VRAM) | Cleanest API; recommended for the code tour |
+| **Official `Wan-Video/Wan2.2`** | 4090 or better, with `--offload_model --t5_cpu` | Production codebase; what the call-path tour points into |
 
-For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 / H100 for an hour.
+For the read-and-trace exercise (the meat of this lab), only the source code matters — you can do that on M3 without running anything. For actually generating a video, plan on a rented 4090 (or better) for an hour.
 
 ## Files
 
