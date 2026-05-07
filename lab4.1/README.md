@@ -149,6 +149,130 @@ if self.rank == 0:
 
 The `if self.rank == 0` guard matters under sequence parallelism: only rank 0 holds the final assembled `x0` and writes the output file; other ranks have already done their share of the sampling work and skip the decode.
 
+### Inside `WanModel.forward()` — the transformer
+
+Step 4 of the sampling loop calls `self.model(latent_model_input, t=timestep, **arg_c)`. PyTorch's `nn.Module.__call__` dispatches that to **`WanModel.forward()`** (after running pre/post hooks; for inference there usually aren't any). So the body of one DiT step lives in `wan/modules/model.py`, in the `WanModel` class.
+
+**`WanModel.forward()`** (`wan/modules/model.py`, lines 347–415) — the orchestrator for one step. Same five phases as lab 3.1's `DiT.forward()`, just with 3D extensions.
+
+```python
+# wan/modules/model.py, lines 347–415 (abridged)
+def forward(self, x, t, context, seq_len, ...):
+    # 1. Patchify (3D: time + space)
+    x = [self.patch_embedding(u.unsqueeze(0)) for u in x]   # Conv3d
+    grid_sizes = torch.stack([torch.tensor(u.shape[2:], ...) for u in x])
+    x = [u.flatten(2).transpose(1, 2) for u in x]           # → (B, T·H·W, hidden)
+
+    # 2. Time embedding → 6-tensor conditioning vector e0
+    e  = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
+    e0 = self.time_projection(e).unflatten(1, (6, self.dim))
+
+    # 3. Text embedding (umT5 features → DiT hidden)
+    context = self.text_embedding(...)
+
+    # 4. The DiT block stack
+    for block in self.blocks:
+        x = block(x, e=e0, ..., context=context, ...)
+
+    # 5. Head + unpatchify
+    x = self.head(x, e)
+    x = self.unpatchify(x, grid_sizes)
+    return [u.float() for u in x]
+```
+
+What's identical to lab 3.1 / 3.2: the five-phase shape, the 6 modulation tensors per block, the cross-attention to text features. What's new:
+
+- `self.patch_embedding` is a **`Conv3d`** (lab 3.1 was `Conv2d`) with patch shape `(p_t, p_h, p_w)` — tokenizes time *and* space at once.
+- `grid_sizes` carries each sample's `(T', H', W')` so unpatchify and 3D RoPE can reconstruct the spatial layout.
+- `time_projection` produces `e0` of shape `(B, 6, hidden)` — the same `(shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp)` you wrote in lab 3.1's `adaLN_modulation`, just unflattened.
+
+**`WanAttentionBlock.forward()`** (lines 188–276) — one block of `self.blocks`. AdaLN-Zero + self-attention + cross-attention + FFN, mirroring lab 3.2's three-sublayer block.
+
+```python
+# wan/modules/model.py, lines 210–242 (abridged)
+def forward(self, x, e, ..., freqs, context, context_lens):
+    e = (self.modulation + e).chunk(6, dim=1)            # 6 modulation tensors
+
+    # self-attention sublayer (modulated + gated)
+    y = self.self_attn(self.norm1(x) * (1 + e[1]) + e[0], ..., freqs)
+    x = x + y * e[2]                                     # gated residual
+
+    # cross-attention sublayer (unmodulated, like lab 3.2)
+    x = x + self.cross_attn(self.norm3(x), context, context_lens)
+
+    # FFN sublayer (modulated + gated)
+    y = self.ffn(self.norm2(x) * (1 + e[4]) + e[3])
+    x = x + y * e[5]
+    return x
+```
+
+The pattern `norm(x) * (1 + scale) + shift` is exactly lab 3.1's `modulate(LN(x), shift, scale)`. The trailing `* e[2]` / `* e[5]` is lab 3.1's gate. Cross-attention sits unmodulated between the two — same convention as lab 3.2.
+
+**`WanSelfAttention.forward()`** (lines 68–148) — standard MHA with one twist: **RoPE-3D applied to Q and K** before the attention call.
+
+```python
+# wan/modules/model.py, lines 88–107 (abridged)
+def forward(self, x, seq_lens, grid_sizes, freqs):
+    b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
+
+    q = self.norm_q(self.q(x)).view(b, s, n, d)
+    k = self.norm_k(self.k(x)).view(b, s, n, d)
+    v = self.v(x).view(b, s, n, d)
+
+    x = flash_attention(
+        q=rope_apply(q, grid_sizes, freqs),              # ← RoPE-3D
+        k=rope_apply(k, grid_sizes, freqs),              # ← RoPE-3D
+        v=v,
+        k_lens=seq_lens, window_size=self.window_size)
+```
+
+Three things worth noting:
+
+- **`norm_q`, `norm_k`** — RMSNorm on Q and K *before* RoPE. This is the QK-norm stabilization trick that lab 4.2's SGLang-Diffusion deep dive identifies as a fusable kernel ("JIT QK-norm").
+- **`rope_apply`** — the production version of lab 3.1's `apply_rope`. It splits the head dim into **three** frequency bands (one each for `t`, `h`, `w`) instead of two. The split is `c − 2·⌊c/3⌋` for `t` and `⌊c/3⌋` each for `h`, `w`, applied as a rotation per band.
+- **`flash_attention`** — same `Q · Kᵀ → softmax → · V` math as lab 1.3, just dispatched to the FlashAttention kernel for tiled softmax (lab 4.2's first technique row).
+
+**`WanT2VCrossAttention.forward()`** (lines 151–176) — structurally identical to lab 3.2's `CrossAttention`. Q from image tokens, K and V from the text `context`.
+
+```python
+# wan/modules/model.py, lines 153–176
+def forward(self, x, context, context_lens):
+    b, n, d = x.size(0), self.num_heads, self.head_dim
+
+    q = self.norm_q(self.q(x)).view(b, -1, n, d)         # image queries
+    k = self.norm_k(self.k(context)).view(b, -1, n, d)   # text keys
+    v = self.v(context).view(b, -1, n, d)                # text values
+
+    x = flash_attention(q, k, v, k_lens=context_lens)
+    return self.o(x.flatten(2))
+```
+
+Two telling differences from self-attention: K and V come from `context` (the umT5 features), and **`rope_apply` is absent**. RoPE is for *spatial* positions; text tokens are sequential and the encoder already baked their positions into the embeddings. Same design as lab 3.2.
+
+**`rope_params` and `rope_apply` — the 3D extension** (lines 30–65):
+
+```python
+# wan/modules/model.py, lines 31–40
+def rope_params(max_seq_len, dim, theta=10000):
+    freqs = torch.outer(
+        torch.arange(max_seq_len),
+        1.0 / torch.pow(theta,
+                        torch.arange(0, dim, 2).to(torch.float64).div(dim)))
+    freqs = torch.polar(torch.ones_like(freqs), freqs)
+    return freqs
+```
+
+`rope_params` builds a per-axis frequency table identical to lab 3.1's `rope_freqs`. The 3D extension lives in `rope_apply`, which splits the head dim into three bands (t, h, w) and rotates each by its axis position. After `Q · K`, the dot product factors cleanly into three independent cosines:
+
+```
+logit  ≈  cos(Δt·θ_t) · ⟨q_t, k_t⟩
+        + cos(Δh·θ_h) · ⟨q_h, k_h⟩
+        + cos(Δw·θ_w) · ⟨q_w, k_w⟩
+        + (smaller sin cross-terms)
+```
+
+Same trick lab 3.1 walked through with the 4×4 worked example, just with three axes instead of two.
+
 ### Component map
 
 | WAN component | File:function | Lab where you built it | Same as the lab | What's new |
