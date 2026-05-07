@@ -273,22 +273,6 @@ logit  ≈  cos(Δt·θ_t) · ⟨q_t, k_t⟩
 
 Same trick lab 3.1 walked through with the 4×4 worked example, just with three axes instead of two.
 
-### Component map
-
-| WAN component | File:function | Lab where you built it | Same as the lab | What's new |
-|---|---|---|---|---|
-| `WanAttentionBlock` | `wan/modules/model.py` | lab 3.1 (`DiTBlock`), lab 3.2 (added cross-attn) | LN → attn → +res structure, AdaLN-Zero modulation, gate, MLP sublayer | RoPE-3D applied inside attn |
-| `WanSelfAttention` (with RoPE) | `wan/modules/model.py` | lab 3.1 (`Attention`) | Multi-head self-attention with RoPE on Q/K | RoPE has 3 axes (t, h, w) instead of 2 |
-| `WanCrossAttention` | `wan/modules/model.py` | lab 3.2 (`CrossAttention`) | Image queries attend to text K/V | Larger text encoder (umT5-XXL); same op |
-| `rope_params()`, `rope_apply()` | `wan/modules/model.py` | lab 3.1 (`rope_freqs`, `apply_rope`) | Same rotation-by-position trick | 3 frequency bands (t, h, w), concatenated |
-| 3D patchify | `wan/modules/model.py` | lab 3.1 (Conv2d patchify) | Conv-based tokenization | `Conv3d` with patch shape `(p_t, p_h, p_w)` |
-| `unpatchify()` | `wan/modules/model.py` | lab 3.1 (`unpatchify`) | Reverse of patchify | 3D rearrangement |
-| `WanVAE.encode/decode` | `wan/modules/vae.py` | lab 3.2 (SD-VAE) | Latent diffusion: encode pixels → latent | 3D causal: compresses time + space; latent shape `(C, T, H, W)` |
-| `T5EncoderModel` | `wan/modules/t5.py` | lab 3.2 (CLIP text encoder) | Pretrained, frozen, returns per-token features | umT5-XXL is ~100× larger; richer language understanding |
-| `FlowUniPCMultistepScheduler` / `FlowDPMSolverMultistepScheduler` | imported into `text2video.py` | lab 2.2 (Euler ODE) | Flow-matching sampler | Higher-order multistep solvers (`--sample_solver unipc` is default; `dpm++` available); same `v_θ` field, fewer steps for equivalent quality |
-| AdaLN-Zero modulation | `wan/modules/model.py` | lab 3.1 (`adaLN_modulation`) | `c → SiLU → Linear` decoded into shift/scale/gate per block | Identical mechanism |
-| CFG | `wan/text2video.py` | lab 2.2 / 3.2 | `v_uncond + s · (v_cond − v_uncond)` | Identical formula |
-
 ## Self-check
 
 After reading the tour:
