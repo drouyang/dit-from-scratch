@@ -7,17 +7,14 @@ A hands-on path to understanding Diffusion Transformers. Build each prerequisite
 
 Each module has its own lab directory with detailed instructions (e.g. `lab1.1/` for Module 1.1).
 
-## Setup (once, shared across all labs)
+---
+## Setup
 
 Create one venv at the repo root and activate it; each lab's Setup section then just adds its own deps to that shared environment.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 ```
-
-Then per lab, run `pip install -r labx.x/requirements.txt` (each lab's Setup repeats this verbatim).
-
----
 
 ## Part 1 — Building Blocks (~15-25 hours)
 
