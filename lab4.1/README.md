@@ -4,41 +4,29 @@
 
 WAN 2.1 T2V-1.3B is the smallest official WAN checkpoint (~1.3B params); inference fits comfortably on a single 4090 (24 GB), with VRAM to spare.
 
-## Setup
+## Run inference
 
-### diffusers path (recommended for reading)
+### Path A: diffusers (recommended for reading)
 
 From the repo root with the shared venv activated:
 
 ```bash
 pip install -r lab4.1/requirements.txt
+python lab4.1/inference_diffusers.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 ```
 
-`WanPipeline` for the WAN 2.1 family is in stable diffusers — no from-source install needed. First inference run downloads the T2V-1.3B checkpoint (~5 GB total: VAE + umT5 + transformer) into the HF cache.
+`WanPipeline` for the WAN 2.1 family is in stable diffusers — no from-source install needed. First run downloads the T2V-1.3B checkpoint (~5 GB total: VAE + umT5 + transformer) into the HF cache.
 
-### Official Wan2.1 path (recommended for understanding production code)
+Output: `out.mp4` — 49 frames at 832×480, 16 fps (≈3 seconds). Generation takes ~3–5 minutes on a 4090 at default settings.
+
+### Path B: official repo (recommended for understanding production code)
 
 ```bash
 git clone https://github.com/Wan-Video/Wan2.1.git
 cd Wan2.1
 pip install -r requirements.txt
 huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir ./Wan2.1-T2V-1.3B
-```
 
-## Run inference
-
-### Path A: diffusers
-
-```bash
-python inference_diffusers.py --prompt "a fluffy red panda eating bamboo on a tree branch"
-```
-
-Output: `out.mp4` — 49 frames at 832×480, 16 fps (≈3 seconds). Generation takes ~3–5 minutes on a 4090 at default settings.
-
-### Path B: official repo
-
-```bash
-cd Wan2.1
 python generate.py --task t2v-1.3B --size 832*480 \
     --ckpt_dir ./Wan2.1-T2V-1.3B \
     --prompt "a fluffy red panda eating bamboo on a tree branch"
