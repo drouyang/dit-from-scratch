@@ -57,6 +57,80 @@ generate.py  (--task t2v-1.3B)
 
 This is structurally identical to lab 3.2's `sample.py`. Only the modalities, resolutions, and parameter counts changed.
 
+### Key steps in `WanT2V.generate()` (`wan/text2video.py`)
+
+The tree above is the mental model; here's the actual code with line numbers, walked top-to-bottom.
+
+**1. Text encoding** — encodes the prompt **and** the negative prompt; both pass through the model in the sampling loop for CFG (lab 2.2).
+
+```python
+# wan/text2video.py, lines 129–137
+context      = self.text_encoder([input_prompt], self.device)
+context_null = self.text_encoder([n_prompt],     self.device)
+```
+
+`n_prompt` defaults to `self.sample_neg_prompt` — a fixed string the WAN team picked for video generation (artifact-suppressing words like *"blurry, low quality, distorted, ..."*).
+
+**2. Noise initialization** — one Gaussian noise tensor with target latent shape `(C, T, H, W)`.
+
+```python
+# wan/text2video.py, lines 139–147
+noise = [torch.randn(
+    target_shape[0], target_shape[1],
+    target_shape[2], target_shape[3],
+    dtype=torch.float32, device=self.device, generator=seed_g)]
+```
+
+`seed_g` is a `torch.Generator` seeded with `args.base_seed` — what makes a run reproducible at the same seed.
+
+**3. Scheduler construction** — two solver branches, both producing a list of `timesteps` to iterate over.
+
+```python
+# wan/text2video.py, lines 156–179
+if sample_solver == 'unipc':
+    sample_scheduler = FlowUniPCMultistepScheduler(
+        num_train_timesteps=self.num_train_timesteps,
+        shift=1, use_dynamic_shifting=False)
+    sample_scheduler.set_timesteps(sampling_steps, device=self.device, shift=shift)
+elif sample_solver == 'dpm++':
+    sample_scheduler = FlowDPMSolverMultistepScheduler(
+        num_train_timesteps=self.num_train_timesteps,
+        shift=1, use_dynamic_shifting=False)
+    sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
+    timesteps, _ = retrieve_timesteps(sample_scheduler, device=self.device, sigmas=sampling_sigmas)
+```
+
+Both replace lab 2.2's plain Euler integrator with a **higher-order multistep solver** — same flow-matching velocity field `v_θ(x_t, t)`, smarter integration of the ODE so you get the same quality at fewer steps:
+
+- **UniPC** ([Zhao et al. 2023](https://arxiv.org/abs/2302.04867)) — predictor-corrector, up to 3rd-order. Tends to win at very low step counts (5–10). Default in WAN.
+- **DPM++** ([Lu et al. 2022](https://arxiv.org/abs/2211.01095)) — 2nd-order multistep. Older, well-trodden; what most SD1.x/SDXL ComfyUI workflows ship.
+
+The `Flow` prefix means the scheduler is adapted to flow matching's velocity parameterization (`v = noise − x_0`) rather than DDPM's noise-prediction parameterization. The integrator math is the same; only the variable being integrated differs. `shift` is the rectified-flow timestep-shifting parameter that pushes more sample budget toward the noise side of the trajectory.
+
+**4. Sampling loop with CFG** — each step runs the DiT *twice* (once with the prompt, once with the negative prompt) and extrapolates.
+
+```python
+# wan/text2video.py, lines 175–199
+for _, t in enumerate(tqdm(timesteps)):
+    timestep = torch.stack([t])
+    noise_pred_cond   = self.model(latent_model_input, t=timestep, **arg_c   )[0]
+    noise_pred_uncond = self.model(latent_model_input, t=timestep, **arg_null)[0]
+    noise_pred = noise_pred_uncond + guide_scale * (noise_pred_cond - noise_pred_uncond)
+    # scheduler.step(noise_pred, t, latents) → updates latents
+```
+
+Two forward passes per step is exactly the CFG cost lab 2.2 calls out — `arg_c` carries the prompt's text embeddings, `arg_null` the negative prompt's. The CFG extrapolation is the same `v_uncond + s · (v_cond − v_uncond)` formula you wrote in lab 2.2 / lab 3.2.
+
+**5. VAE decode** — single call after the sampling loop, on rank 0 only.
+
+```python
+# wan/text2video.py, line 208
+if self.rank == 0:
+    videos = self.vae.decode(x0)
+```
+
+The `if self.rank == 0` guard matters under sequence parallelism: only rank 0 holds the final assembled `x0` and writes the output file; other ranks have already done their share of the sampling work and skip the decode.
+
 ### Component map
 
 | WAN component | File:function | Lab where you built it | Same as the lab | What's new |
@@ -69,7 +143,7 @@ This is structurally identical to lab 3.2's `sample.py`. Only the modalities, re
 | `unpatchify()` | `wan/modules/model.py` | lab 3.1 (`unpatchify`) | Reverse of patchify | 3D rearrangement |
 | `WanVAE.encode/decode` | `wan/modules/vae.py` | lab 3.2 (SD-VAE) | Latent diffusion: encode pixels → latent | 3D causal: compresses time + space; latent shape `(C, T, H, W)` |
 | `T5EncoderModel` | `wan/modules/t5.py` | lab 3.2 (CLIP text encoder) | Pretrained, frozen, returns per-token features | umT5-XXL is ~100× larger; richer language understanding |
-| `FlowUniPCMultistepScheduler` | imported into `text2video.py` | lab 2.2 (Euler ODE) | Flow-matching sampler | Higher-order multi-step solver, fewer steps for the same quality |
+| `FlowUniPCMultistepScheduler` / `FlowDPMSolverMultistepScheduler` | imported into `text2video.py` | lab 2.2 (Euler ODE) | Flow-matching sampler | Higher-order multistep solvers (`--sample_solver unipc` is default; `dpm++` available); same `v_θ` field, fewer steps for equivalent quality |
 | AdaLN-Zero modulation | `wan/modules/model.py` | lab 3.1 (`adaLN_modulation`) | `c → SiLU → Linear` decoded into shift/scale/gate per block | Identical mechanism |
 | CFG | `wan/text2video.py` | lab 2.2 / 3.2 | `v_uncond + s · (v_cond − v_uncond)` | Identical formula |
 
