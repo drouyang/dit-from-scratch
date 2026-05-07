@@ -274,13 +274,3 @@ logit  ≈  cos(Δt·θ_t) · ⟨q_t, k_t⟩
 ```
 
 Same trick lab 3.1 walked through with the 4×4 worked example, just with three axes instead of two.
-
-## Self-check
-
-After reading the tour:
-
-- [ ] Open `wan/modules/model.py` and find `WanAttentionBlock`. Confirm you can map every line of its forward pass to either lab 3.1 (self-attn / AdaLN / MLP) or lab 3.2 (cross-attn).
-- [ ] Open `wan/modules/vae.py` and identify the `Conv3d` layers — that's the 3D causal extension over SD-VAE's 2D `Conv2d`.
-- [ ] Find `rope_apply()` and confirm three concatenated rotation bands. Compare against lab 3.1's `apply_rope()` (which has two: row + column).
-
-If you can do these three things, you've completed the lab.
