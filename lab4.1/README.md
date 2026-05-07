@@ -25,7 +25,7 @@ Output: `out.mp4` — 49 frames at 832×480, 16 fps (≈3 seconds). Generation t
 git clone https://github.com/Wan-Video/Wan2.1.git
 cd Wan2.1
 pip install -r requirements.txt
-huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir ./Wan2.1-T2V-1.3B
+hf download Wan-AI/Wan2.1-T2V-1.3B --local-dir ./Wan2.1-T2V-1.3B
 
 python generate.py --task t2v-1.3B --size 832*480 \
     --ckpt_dir ./Wan2.1-T2V-1.3B \

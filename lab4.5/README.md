@@ -38,7 +38,7 @@ From the repo root with the shared venv activated:
 pip install -r lab4.5/requirements.txt
 ```
 
-Path 1 needs a HuggingFace write token (`huggingface-cli login`). Path 2 has no special prereqs — you'll be writing code, not running it. Path 3 needs a CUDA GPU (`bitsandbytes` doesn't support MPS or CPU); skip it on Mac and run from a rented GPU.
+Path 1 needs a HuggingFace write token (`hf auth login`). Path 2 has no special prereqs — you'll be writing code, not running it. Path 3 needs a CUDA GPU (`bitsandbytes` doesn't support MPS or CPU); skip it on Mac and run from a rented GPU.
 
 ## Path 1 — Publish your LoRA on HuggingFace Hub
 
@@ -55,7 +55,7 @@ For that to work, your LoRA needs to live on HuggingFace with the right files at
 ### Steps
 
 ```bash
-huggingface-cli login          # paste a write token from https://huggingface.co/settings/tokens
+hf auth login                  # paste a write token from https://huggingface.co/settings/tokens
 ```
 
 Upload from Python (`peft` already wrote both required files during training in lab 4.3):
