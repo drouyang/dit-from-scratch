@@ -15,7 +15,7 @@ pip install -r lab4.1/requirements.txt
 python lab4.1/inference_diffusers.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 ```
 
-`WanPipeline` for the WAN 2.1 family is in stable diffusers — no from-source install needed. First run downloads the T2V-1.3B checkpoint (~5 GB total: VAE + umT5 + transformer) into the HF cache.
+`WanPipeline` for the WAN 2.1 family first run downloads the T2V-1.3B checkpoint (~5 GB total: VAE + umT5 + transformer) into the HF cache.
 
 Output: `out.mp4` — 49 frames at 832×480, 16 fps (≈3 seconds). Generation takes ~3–5 minutes on a 4090 at default settings.
 
