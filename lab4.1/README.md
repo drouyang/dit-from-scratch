@@ -121,7 +121,25 @@ for _, t in enumerate(tqdm(timesteps)):
 
 Two forward passes per step is exactly the CFG cost lab 2.2 calls out — `arg_c` carries the prompt's text embeddings, `arg_null` the negative prompt's. The CFG extrapolation is the same `v_uncond + s · (v_cond − v_uncond)` formula you wrote in lab 2.2 / lab 3.2.
 
-**5. VAE decode** — single call after the sampling loop, on rank 0 only.
+`tqdm(timesteps)` is just a progress-bar wrapper — it iterates the same items in the same order and prints `100%|████| 50/50 [01:48<00:00, 2.17s/it]` to the console. No effect on the math; production inference servers (lab 4.2's SGLang-Diffusion) often strip it.
+
+**5. Offload the DiT, free the cache** — runs *after* the sampling loop, *before* the VAE decode. This is exactly the mechanism behind the `--offload_model True` flag we discussed.
+
+```python
+# wan/text2video.py
+if offload_model:
+    self.model.cpu()
+    torch.cuda.empty_cache()
+```
+
+Two distinct things happen:
+
+- **`self.model.cpu()`** — `self.model` is the WAN DiT (`WanModel` from `wan/modules/model.py`, ~1.3B params, ~2.6 GB at bf16). Calling `.cpu()` on a `nn.Module` walks all its parameters, gradients, and buffers and copies them from GPU memory to CPU RAM. After this line returns, those tensors no longer occupy any GPU memory — they're just regular CPU tensors. (`.cpu()` and `.cuda()` both do this: a memcpy plus a re-binding of the parameter to the new device.)
+- **`torch.cuda.empty_cache()`** — this is the part that actually frees the GPU memory back to NVIDIA's CUDA allocator. Critical detail: PyTorch maintains its own caching memory allocator on top of CUDA. When you "free" a tensor (e.g., by moving it to CPU), PyTorch keeps the underlying GPU memory in its cache so it can reuse it for the next allocation without paying a `cudaMalloc` round-trip. `nvidia-smi` will still show that memory as in-use by the process, even though no live tensor references it. `torch.cuda.empty_cache()` flushes that cache — releases the memory back to CUDA's allocator (and to `nvidia-smi`'s view of the world), so the next allocation (the VAE) has room.
+
+Without the `empty_cache` call, the DiT's freed memory would stay reserved-but-unused in PyTorch's cache, and the VAE decode below would still OOM despite the DiT being "offloaded." Both lines together are what make the offload actually work.
+
+**6. VAE decode** — single call after the sampling loop, on rank 0 only.
 
 ```python
 # wan/text2video.py, line 208
