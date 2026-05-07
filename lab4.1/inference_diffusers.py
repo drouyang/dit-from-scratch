@@ -40,6 +40,12 @@ def main():
         model_id, vae=vae, torch_dtype=torch.bfloat16,
     ).to("cuda")
 
+    # VAE decode of a (4, T, H, W) video latent at 832×480 × 49 frames
+    # otherwise needs ~5 GB on top of the transformer's working set, which
+    # OOMs on a 24 GB 4090. Tiling decodes in spatial chunks; tiny wall-clock
+    # cost, fits everywhere.
+    pipe.vae.enable_tiling()
+
     print(f"generating {args.num_frames} frames at {args.width}x{args.height} "
           f"({args.steps} steps, cfg={args.guidance_scale})...")
     output = pipe(
