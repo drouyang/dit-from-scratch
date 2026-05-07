@@ -127,6 +127,8 @@ Output: `generated.png` — a grid of decoded images, rows = prompts, cols = `--
 
 CFG scale ~3–7 is the production sweet spot; the same range used by SD3 / FLUX. `cfg-scale 1.0` is the model's natural conditional behavior; `0.0` ignores text entirely (samples from the marginal image distribution).
 
+CFG runs the model **twice per step** here — once with the prompt, once with the null embedding the model picked up during label-dropout training (lab 2.2 explains the mechanism). Production text-to-X engines generalize the null pass to a **negative prompt** (`""` by default; users can override to push generations away from things like *"blurry, low quality, distorted"*). The lab's `sample.py` doesn't expose `--negative-prompt`, but `lab4.1/inference_diffusers.py` and `lab4.5/serve.py` do.
+
 ## Interactive demo
 
 After training, launch the Gradio webapp to play with prompts and CFG live:

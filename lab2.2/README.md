@@ -169,13 +169,15 @@ That's the entire training-side change.
 
 ### Sampling: extrapolate
 
-At sampling time, run the model *twice* per step — once with the real class, once with null — and extrapolate:
+At sampling time, run the model **twice** per Euler step — once with the real class, once with null — and extrapolate:
 
 ```
 v = v_uncond  +  s · (v_cond - v_uncond)
 ```
 
 `s = 1` is the model's natural conditional behavior. `s > 1` *extrapolates beyond it*, sharpening conditioning. `s = 0` ignores the class entirely (unconditional).
+
+> **Cost: CFG doubles inference compute.** Every step now does two forward passes through the network instead of one. In this 2-D toy it's invisible, but in production (WAN, SD3, FLUX) it's a 2× wall-clock penalty per generation. This is a big deal — research like LCM, DMD2, and Wan-Lightning explicitly tries to fold the two passes into one (or distill them into a few-step student that doesn't need CFG at all).
 
 In our toy:
 
@@ -187,6 +189,19 @@ In our toy:
 | `7.0` | over-concentrated — samples collapse onto the center, losing spread |
 
 See `cfg.png` for the visualization. Production text-to-image models typically use `cfg_scale` in the 3–10 range — same trade-off (sharper conditioning vs realistic diversity).
+
+### From "null class" to "negative prompt"
+
+The unconditional forward pass needs *some* embedding standing in for "no condition." In this toy it's a learned null-class entry — a single vector the model picked up while seeing dropped labels during training.
+
+In production text-to-X (WAN, SD3, FLUX), the natural generalization is the **negative prompt**:
+
+- **Positive prompt** drives the conditional pass: `v_cond = model(x, t, embed("a fluffy red panda"))`.
+- **Negative prompt** drives the unconditional pass: `v_uncond = model(x, t, embed("blurry, low quality, distorted"))`.
+
+You're still doing CFG — same formula, same 2× cost — but the "unconditional" pass is now actively pushing *away from* the negative prompt's content rather than just being a neutral baseline. Most pipelines default the negative prompt to the empty string `""` (which gives you something close to a true unconditional), but exposing it lets users steer generations away from artifacts they don't want. This is why `lab4.1/inference_diffusers.py` and `lab4.5/serve.py` both accept `--negative-prompt`.
+
+Mechanically, lab 2.2's null class is the simplest instance of this: a special token in the embedding table for "no condition." Production scales the same idea up to a full text encoder.
 
 ## Files
 
