@@ -7,7 +7,6 @@ A hands-on path to understanding Diffusion Transformers. Build each prerequisite
 
 Each module has its own lab directory with detailed instructions (e.g. `lab1.1/` for Module 1.1).
 
----
 ## Setup
 
 Create one venv at the repo root and activate it; each lab's Setup section then just adds its own deps to that shared environment.
