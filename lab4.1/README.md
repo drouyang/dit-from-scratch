@@ -59,12 +59,12 @@ This is structurally identical to lab 3.2's `sample.py`. Only the modalities, re
 
 ### Key steps in `WanT2V.generate()` (`wan/text2video.py`)
 
-The tree above is the mental model; here's the actual code with line numbers, walked top-to-bottom.
+The tree above is the mental model; here's the actual code, walked top-to-bottom.
 
 **1. Text encoding** — encodes the prompt **and** the negative prompt; both pass through the model in the sampling loop for CFG (lab 2.2).
 
 ```python
-# wan/text2video.py, lines 129–137
+# wan/text2video.py
 context      = self.text_encoder([input_prompt], self.device)
 context_null = self.text_encoder([n_prompt],     self.device)
 ```
@@ -74,7 +74,7 @@ context_null = self.text_encoder([n_prompt],     self.device)
 **2. Noise initialization** — one Gaussian noise tensor with target latent shape `(C, T, H, W)`.
 
 ```python
-# wan/text2video.py, lines 139–147
+# wan/text2video.py
 noise = [torch.randn(
     target_shape[0], target_shape[1],
     target_shape[2], target_shape[3],
@@ -86,7 +86,7 @@ noise = [torch.randn(
 **3. Scheduler construction** — two solver branches, both producing a list of `timesteps` to iterate over.
 
 ```python
-# wan/text2video.py, lines 156–179
+# wan/text2video.py
 if sample_solver == 'unipc':
     sample_scheduler = FlowUniPCMultistepScheduler(
         num_train_timesteps=self.num_train_timesteps,
@@ -110,7 +110,7 @@ The `Flow` prefix means the scheduler is adapted to flow matching's velocity par
 **4. Sampling loop with CFG** — each step runs the DiT *twice* (once with the prompt, once with the negative prompt) and extrapolates.
 
 ```python
-# wan/text2video.py, lines 175–199
+# wan/text2video.py
 for _, t in enumerate(tqdm(timesteps)):
     timestep = torch.stack([t])
     noise_pred_cond   = self.model(latent_model_input, t=timestep, **arg_c   )[0]
@@ -142,7 +142,7 @@ Without the `empty_cache` call, the DiT's freed memory would stay reserved-but-u
 **6. VAE decode** — single call after the sampling loop, on rank 0 only.
 
 ```python
-# wan/text2video.py, line 208
+# wan/text2video.py
 if self.rank == 0:
     videos = self.vae.decode(x0)
 ```
@@ -153,10 +153,10 @@ The `if self.rank == 0` guard matters under sequence parallelism: only rank 0 ho
 
 Step 4 of the sampling loop calls `self.model(latent_model_input, t=timestep, **arg_c)`. PyTorch's `nn.Module.__call__` dispatches that to **`WanModel.forward()`** (after running pre/post hooks; for inference there usually aren't any). So the body of one DiT step lives in `wan/modules/model.py`, in the `WanModel` class.
 
-**`WanModel.forward()`** (`wan/modules/model.py`; class at line 372, `forward` starts at line 493) — the orchestrator for one step. Same five phases as lab 3.1's `DiT.forward()`, just with 3D extensions.
+**`WanModel.forward()`** (`wan/modules/model.py`) — the orchestrator for one step. Same five phases as lab 3.1's `DiT.forward()`, just with 3D extensions.
 
 ```python
-# wan/modules/model.py, line 493 onward (abridged)
+# wan/modules/model.py (abridged)
 def forward(self, x, t, context, seq_len, clip_fea=None, y=None):
     # 1. Patchify (3D: time + space)
     x = [self.patch_embedding(u.unsqueeze(0)) for u in x]   # Conv3d
@@ -188,10 +188,10 @@ What's identical to lab 3.1 / 3.2: the five-phase shape, the 6 modulation tensor
 - `grid_sizes` carries each sample's `(T', H', W')` so unpatchify and 3D RoPE can reconstruct the spatial layout.
 - `time_projection` produces `e0` of shape `(B, 6, hidden)` — the same `(shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp)` you wrote in lab 3.1's `adaLN_modulation`, just unflattened.
 
-**`WanAttentionBlock.forward()`** (class at line 238, `forward` body lines 278–331) — one block of `self.blocks`. AdaLN-Zero + self-attention + cross-attention + FFN, mirroring lab 3.2's three-sublayer block.
+**`WanAttentionBlock.forward()`** — one block of `self.blocks`. AdaLN-Zero + self-attention + cross-attention + FFN, mirroring lab 3.2's three-sublayer block.
 
 ```python
-# wan/modules/model.py, lines 278–331 (abridged)
+# wan/modules/model.py (abridged)
 def forward(self, x, e, seq_lens, grid_sizes, freqs, context, context_lens):
     e = (self.modulation + e).chunk(6, dim=1)            # 6 modulation tensors
 
@@ -209,10 +209,10 @@ def forward(self, x, e, seq_lens, grid_sizes, freqs, context, context_lens):
 
 The pattern `norm(x) * (1 + scale) + shift` is exactly lab 3.1's `modulate(LN(x), shift, scale)`. The trailing `* e[2]` / `* e[5]` is lab 3.1's gate. Cross-attention sits unmodulated between the two — same convention as lab 3.2.
 
-**`WanSelfAttention.forward()`** (class at line 105, `forward` lines 130–161) — standard MHA with one twist: **RoPE-3D applied to Q and K** before the attention call.
+**`WanSelfAttention.forward()`** — standard MHA with one twist: **RoPE-3D applied to Q and K** before the attention call.
 
 ```python
-# wan/modules/model.py, lines 130–161 (abridged)
+# wan/modules/model.py (abridged)
 def forward(self, x, seq_lens, grid_sizes, freqs):
     b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
 
@@ -234,10 +234,10 @@ Three things worth noting:
 - **`rope_apply`** — the production version of lab 3.1's `apply_rope`. It splits the head dim into **three** frequency bands (one each for `t`, `h`, `w`) instead of two. The split is `c − 2·⌊c/3⌋` for `t` and `⌊c/3⌋` each for `h`, `w`, applied as a rotation per band.
 - **`flash_attention`** — same `Q · Kᵀ → softmax → · V` math as lab 1.3, just dispatched to the FlashAttention kernel for tiled softmax (lab 4.2's first technique row).
 
-**`WanT2VCrossAttention.forward()`** (class at line 162, `forward` lines 164–186) — structurally identical to lab 3.2's `CrossAttention`. Q from image tokens, K and V from the text `context`.
+**`WanT2VCrossAttention.forward()`** — structurally identical to lab 3.2's `CrossAttention`. Q from image tokens, K and V from the text `context`.
 
 ```python
-# wan/modules/model.py, lines 164–186
+# wan/modules/model.py
 def forward(self, x, context, context_lens):
     b, n, d = x.size(0), self.num_heads, self.head_dim
 
@@ -251,10 +251,10 @@ def forward(self, x, context, context_lens):
 
 Two telling differences from self-attention: K and V come from `context` (the umT5 features), and **`rope_apply` is absent**. RoPE is for *spatial* positions; text tokens are sequential and the encoder already baked their positions into the embeddings. Same design as lab 3.2.
 
-**`rope_params` and `rope_apply` — the 3D extension** (`rope_params` lines 31–40, `rope_apply` lines 43–62):
+**`rope_params` and `rope_apply` — the 3D extension**:
 
 ```python
-# wan/modules/model.py, lines 31–40
+# wan/modules/model.py
 def rope_params(max_seq_len, dim, theta=10000):
     freqs = torch.outer(
         torch.arange(max_seq_len),
