@@ -218,11 +218,10 @@ Mechanically, lab 2.2's null class is the simplest instance of this: a special t
 
 ### 1. Set up
 
-Python 3.9+. From `lab2.2/`:
+Python 3.9+. From the repo root with the shared venv activated (see the parent README's setup note):
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab2.2/requirements.txt
 ```
 
 ### 2. Train

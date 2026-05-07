@@ -89,11 +89,10 @@ Reaching val loss ≈ 1.3 in 5000 steps on the default config typically gives Sh
 
 ### 1. Set up
 
-Python 3.9+. From `lab1.4/`:
+Python 3.9+. From the repo root with the shared venv activated (see the parent README's setup note):
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab1.4/requirements.txt
 ```
 
 Training auto-selects device: CUDA → Apple MPS → CPU. The dataset auto-downloads on first run (~1MB).

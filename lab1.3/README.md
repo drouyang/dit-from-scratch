@@ -82,11 +82,10 @@ The model has exactly **one** attention layer. No MLP. No LayerNorm. No residual
 
 ### 1. Set up
 
-Python 3.9+. From `lab1.3/`:
+Python 3.9+. From the repo root with the shared venv activated (see the parent README's setup note):
 
 ```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab1.3/requirements.txt
 ```
 
 Training auto-selects device: CUDA → Apple MPS → CPU. No dataset download — the reverse task generates data on the fly.

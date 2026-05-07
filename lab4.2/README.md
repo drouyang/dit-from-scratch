@@ -66,10 +66,10 @@ CUDA-required for the meaningful optimizations.
 
 ## Setup
 
+From the repo root with the shared venv activated:
+
 ```bash
-cd lab4.2/
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab4.2/requirements.txt
 
 # SGLang-Diffusion is installed separately because it requires uv + prerelease pins:
 pip install --upgrade uv

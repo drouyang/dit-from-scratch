@@ -84,10 +84,10 @@ For this scale of SFT (1.3B model), DDP is the right scaling shape — every GPU
 
 ## Setup
 
+From the repo root with the shared venv activated:
+
 ```bash
-cd lab4.4/
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab4.4/requirements.txt
 ```
 
 `bitsandbytes` requires CUDA. M3 / CPU won't work for this lab — see lab 4.1's compute notes.

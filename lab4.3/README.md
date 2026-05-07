@@ -93,10 +93,10 @@ Part 4's compute target is a **4× 4090 server**. The per-GPU config is sized to
 
 ### Setup
 
+From the repo root with the shared venv activated:
+
 ```bash
-cd lab4.3/
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab4.3/requirements.txt
 ```
 
 First run will download Wan-2.1 T2V-1.3B from HuggingFace (~5 GB total: VAE + text encoder + transformer). The repo is public — no auth required.

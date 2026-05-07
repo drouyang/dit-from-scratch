@@ -44,11 +44,10 @@ The encoder discards information by passing the image through a bottleneck small
 
 ### 1. Set up
 
-Python 3.9+. From `lab1.2/`:
+Python 3.9+. From the repo root with the shared venv activated (see the parent README's setup note):
 
 ```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab1.2/requirements.txt
 ```
 
 Training auto-selects device: CUDA → Apple MPS → CPU. CIFAR-10 downloads to `./data/` on first run (~170 MB).

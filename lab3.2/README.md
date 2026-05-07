@@ -86,11 +86,10 @@ The VAE actually *hasn't* scaled much — 84M params is enough to reconstruct na
 
 ## Setup
 
-Python 3.9+. From `lab3.2/`:
+Python 3.9+. From the repo root with the shared venv activated (see the parent README's setup note):
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab3.2/requirements.txt
 ```
 
 First run downloads three models from HuggingFace (cached at `~/.cache/huggingface/`):

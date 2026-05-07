@@ -91,11 +91,10 @@ That's the entire mechanism. ~30 lines of remap + 4 transposes + 2 skips = OpenA
 
 ## Setup
 
-Python 3.9+. From `lab1.5/`:
+Python 3.9+. From the repo root with the shared venv activated (see the parent README's setup note):
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab1.5/requirements.txt
 ```
 
 First load of any size triggers a HuggingFace download (~500 MB for `gpt2`, ~6 GB for `gpt2-xl`) cached under `~/.cache/huggingface/`.

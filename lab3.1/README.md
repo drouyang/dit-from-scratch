@@ -95,11 +95,10 @@ Lab 2.2 had a 2-D analogue of this — a velocity field over the plane. Here the
 
 ### 1. Set up
 
-Python 3.9+. From `lab3.1/`:
+Python 3.9+. From the repo root with the shared venv activated (see the parent README's setup note):
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab3.1/requirements.txt
 ```
 
 Training auto-selects device: CUDA → Apple MPS → CPU. MNIST downloads to `./data/` on first run (~12 MB).

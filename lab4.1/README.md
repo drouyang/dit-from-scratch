@@ -8,9 +8,10 @@ WAN 2.1 T2V-1.3B is the smallest official WAN checkpoint (~1.3B params); inferen
 
 ### diffusers path (recommended for reading)
 
+From the repo root with the shared venv activated:
+
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab4.1/requirements.txt
 ```
 
 `WanPipeline` for the WAN 2.1 family is in stable diffusers — no from-source install needed. First inference run downloads the T2V-1.3B checkpoint (~5 GB total: VAE + umT5 + transformer) into the HF cache.

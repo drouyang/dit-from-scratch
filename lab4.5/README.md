@@ -32,10 +32,10 @@ Each path serves a different audience and a different use shape. Most serious re
 
 ## Setup
 
+From the repo root with the shared venv activated:
+
 ```bash
-cd lab4.5/
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r lab4.5/requirements.txt
 ```
 
 Path 1 needs a HuggingFace write token (`huggingface-cli login`). Path 2 has no special prereqs — you'll be writing code, not running it. Path 3 needs a CUDA GPU (`bitsandbytes` doesn't support MPS or CPU); skip it on Mac and run from a rented GPU.
