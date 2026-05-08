@@ -10,6 +10,7 @@ Memory: ~12 GB VRAM. Validated on 4090, A10, A100, H100.
 """
 
 import argparse
+import logging
 import warnings
 
 # Diffusers' attention_dispatch.py uses functools.lru_cache, which torch.compile's
@@ -27,6 +28,18 @@ warnings.filterwarnings(
     "ignore",
     message=r".*Unable to import `torchao` Tensor objects.*",
 )
+# huggingface_hub deprecated a kwarg diffusers still passes; harmless.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*local_dir_use_symlinks.*",
+)
+# "You are sending unauthenticated requests..." nag — public weights, no token
+# needed; the rate limits don't bite at this scale.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*sending unauthenticated requests.*",
+)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 import torch
 from diffusers import AutoencoderKLWan, WanPipeline

@@ -32,11 +32,34 @@ Run:
 """
 
 import argparse
+import logging
 import os
 import shutil
 import subprocess
 import time
+import warnings
 from pathlib import Path
+
+# Same suppression block as lab4.1/inference_diffusers.py — these warnings are
+# noise for our use of WAN's public diffusers checkpoint.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Dynamo detected a call to a `functools\.lru_cache`-wrapped function.*",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Unable to import `torchao` Tensor objects.*",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r".*local_dir_use_symlinks.*",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r".*sending unauthenticated requests.*",
+)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 import torch
 
