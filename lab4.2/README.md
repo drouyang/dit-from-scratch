@@ -18,7 +18,7 @@ What it *doesn't* get you, and what lab 4.2's deeper engines add:
 - No caching of redundant DiT computation across diffusion steps (Cache-DiT contributes ~1.7× by itself).
 - Single-GPU only — no USP / Ring / Ulysses sequence parallelism, no layerwise weight offload.
 
-A production inference engine fixes all of those. SGLang-Diffusion is the canonical open-source one (sister project to SGLang for LLMs). The blog post claims up to 5× speedup over baseline; the techniques below are why.
+A production inference engine fixes all of those.
 
 ## The technique map
 
