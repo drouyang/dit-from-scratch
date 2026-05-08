@@ -315,6 +315,7 @@ Every technique in this lab is for inference. The training-relevant subset:
 - **FlashAttention** — works in training too (and `WanPipeline`'s training flavor in `diffusers` already uses it under the hood when available).
 - **Mixed precision (bf16)** — training, yes (lab 4.3 / 4.5 already use it).
 - **Sequence parallelism** — works in training too via `xfuser` / DeepSpeed-Ulysses; it's used to train long-video models that don't fit on one GPU.
+- **FSDP (params + grads + optim sharded across GPUs)** — *training-only*. The dominant strategy for training a model that doesn't fit one GPU's worth of parameters + Adam state. Lab 4.5's full SFT discusses where it kicks in (1.3B doesn't need it; 14B / Wan-2.2-A14B does). At inference there's no optimizer state and no backward pass to shard, so FSDP doesn't apply — the equivalent shape is **tensor parallelism** (already in this lab's technique map).
 - **Cache-DiT** — *inference-only*. Caching only works when steps converge to similar outputs, which doesn't apply during training where every step changes the loss landscape.
 - **Quantized attention (SageAttention)** — inference-only at production quality. Quantized training is its own research area (FP8 training is reaching production but mostly for LLMs).
 
