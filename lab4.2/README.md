@@ -4,7 +4,7 @@
 
 This lab is **inference-only**. Every technique below targets generation latency on a fixed model. Acceleration techniques that overlap with *training* (FlashAttention, mixed precision, sequence parallelism, FSDP) live in lab 4.3 / 4.5.
 
-## Why a separate lab from 4.1
+## Acceleration over lab 4.1
 
 Lab 4.1 used `WanPipeline.from_pretrained(...).__call__(...)` directly. That's the readable, hackable, ~30-second-load reference path. It's also slow:
 
