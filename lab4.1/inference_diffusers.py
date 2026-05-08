@@ -40,10 +40,19 @@ warnings.filterwarnings(
     message=r".*sending unauthenticated requests.*",
 )
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+# torchao import nag is emitted via diffusers' own logger (logger.warning),
+# not warnings.warn, so the regex filter above doesn't catch it. Lower the
+# diffusers logger to ERROR.
+logging.getLogger("diffusers").setLevel(logging.ERROR)
 
 import torch
 from diffusers import AutoencoderKLWan, WanPipeline
 from diffusers.utils import export_to_video
+
+# Enable TF32 on Ampere+ GPUs — ~2× speedup on fp32 matmuls (the VAE is fp32
+# in this pipeline; the transformer is bf16 and unaffected). Quality loss is
+# imperceptible for video frames.
+torch.set_float32_matmul_precision("high")
 
 
 def main():
