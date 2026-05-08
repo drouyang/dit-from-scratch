@@ -42,22 +42,6 @@ Every optimization in SGLang-Diffusion comes from somewhere. Most are upstream l
 
 The pattern: SGLang-Diffusion's *original code* is the runtime that schedules these kernels and applies offload / parallelism plans. Each named library can be A/B-tested by toggling its flag.
 
-## Toggle map (the SGLang-Diffusion flags)
-
-What makes SGLang-Diffusion teachable: every optimization above is independently turn-on-able from the CLI. From the [official CLI docs](https://sgl-project.github.io/diffusion/api/cli.html):
-
-| Optimization | Flag |
-|---|---|
-| Cache-DiT | `--cache-dit-config <path>` (or `SGLANG_CACHE_DIT_ENABLED=true`) |
-| Attention backend | `--attention-backend {fa,sage,xformers,native,_flash_3_hub}` |
-| Layerwise weight offload | `--dit-layerwise-offload true` |
-| Sequence parallelism | `--sp-degree N`, `--ulysses-degree N`, `--ring-degree N` |
-| Tensor parallelism | `--tp-size N` |
-| VAE memory | `--vae-tiling`, `--vae-slicing` |
-| Text-encoder offload | `--text-encoder-cpu-offload`, `--pin-cpu-memory` |
-
-Useful learning exercise: pick one flag, run the same prompt with and without it, compare wall clock. The `benchmark.py` in this lab is a starting point.
-
 ## Setup
 
 From the repo root with the shared venv activated:
@@ -124,9 +108,23 @@ Numbers vary by GPU, drivers, and SGLang version. The shape — `torch.compile` 
 
 `--skip-compile` skips the `torch.compile` run (saves ~1–2 min). `--skip-sglang` skips the SGLang run.
 
+## Toggle map (the SGLang-Diffusion flags)
+
+What makes SGLang-Diffusion teachable: every optimization in the technique map up top is independently turn-on-able from the CLI. From the [official CLI docs](https://sgl-project.github.io/diffusion/api/cli.html):
+
+| Optimization | Flag |
+|---|---|
+| Cache-DiT | `--cache-dit-config <path>` (or `SGLANG_CACHE_DIT_ENABLED=true`) |
+| Attention backend | `--attention-backend {fa,sage,xformers,native,_flash_3_hub}` |
+| Layerwise weight offload | `--dit-layerwise-offload true` |
+| Sequence parallelism | `--sp-degree N`, `--ulysses-degree N`, `--ring-degree N` |
+| Tensor parallelism | `--tp-size N` |
+| VAE memory | `--vae-tiling`, `--vae-slicing` |
+| Text-encoder offload | `--text-encoder-cpu-offload`, `--pin-cpu-memory` |
+
 ## Suggested A/B exercises
 
-After the basic benchmark works, the lab's deeper exercise is *which optimization buys you what*. Run `sglang generate` with each flag toggled in isolation:
+The lab's deeper exercise, once the basic benchmark works: pick one flag from the toggle map, run the same prompt with and without it, compare wall clock. *Which optimization buys you what.*
 
 ```bash
 # Baseline (FlashAttention default):
