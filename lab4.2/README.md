@@ -81,13 +81,13 @@ shape:  49 frames @ 832×480,  steps=30,  cfg=5.0,  seed=42
   peak VRAM:  10.78 GB
   saved out_diffusers.mp4
 
-=== diffusers + torch.compile(reduce-overhead) ===
+=== diffusers + torch.compile(default) ===
   load:        45.0s
   warming up torch.compile (this is the slow part — ~30-60s)...
   warmup:      48.7s
   generate:   132.8s (steady-state, post-warmup)
   peak VRAM:  11.42 GB
-  saved out_diffusers_compile_reduce-overhead.mp4
+  saved out_diffusers_compile_default.mp4
 
 === sglang ===
   $ sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers ...
@@ -155,22 +155,23 @@ The other production lever, complementary to SGLang-Diffusion's kernel compositi
 
 ```python
 pipe = WanPipeline.from_pretrained(...).to("cuda")
-pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead")
+pipe.transformer = torch.compile(pipe.transformer, mode="default")
 ```
 
 That's it. The first inference call triggers compilation (~30–60 s warmup); subsequent calls are fast.
 
 What `mode` does:
 
-- **`default`** — TorchDynamo + AOTAutograd + Inductor. Constant folding, dead-code elimination, kernel fusion via Triton.
-- **`reduce-overhead`** — adds CUDA graph capture on top. Eliminates per-step Python and kernel-launch overhead. **Best mode for diffusion sampling loops** since the same forward is called N times with only `t` changing.
-- **`max-autotune`** — autotunes Triton kernels at compile time. ~5–10 minutes of compile, ~5–10% extra steady-state speedup. Worth it for production builds, not dev iteration.
+- **`default`** — TorchDynamo + AOTAutograd + Inductor. Constant folding, dead-code elimination, kernel fusion via Triton. **What this lab uses.**
+- **`reduce-overhead`** — adds CUDA graph capture on top. Eliminates per-step Python and kernel-launch overhead. Theoretically the best mode for diffusion sampling loops, but **broken with `WanPipeline`'s two-pass CFG**: the second transformer call's CUDA Graph replay overwrites the first call's output buffer while it's still being read for the `v_uncond + s · (v_cond − v_uncond)` extrapolation, raising `RuntimeError: accessing tensor output of CUDAGraphs that has been overwritten`. Workarounds: clone the transformer output between calls (requires wrapping the transformer module), or call `torch.compiler.cudagraph_mark_step_begin()` between the conditional and unconditional forwards (requires patching diffusers' pipeline).
+- **`max-autotune`** — autotunes Triton kernels at compile time, no CUDA Graphs. ~5–10 minutes of compile, ~5–10% extra steady-state speedup over `default`. Worth it for production builds, not dev iteration.
 
 Pitfalls:
 
-- **Dynamic shapes recompile.** Vary `num_frames` between calls and you'll trigger a recompile (and lose CUDA graph capture). Either fix the shape, or accept the recompile cost.
+- **Dynamic shapes recompile.** Vary `num_frames` between calls and you'll trigger a recompile. Either fix the shape, or accept the recompile cost.
 - **First call is slow.** Always exclude warmup from your benchmarks.
 - **VAE is rarely worth compiling.** Most of the compute is in the transformer; compiling the VAE adds compile-time cost without proportional speedup.
+- **CFG-batched pipelines and CUDA Graphs.** Any pipeline that calls the model twice per step (CFG) is incompatible with `mode="reduce-overhead"` unless you clone outputs between calls. SGLang-Diffusion handles this in its own runtime; `torch.compile` doesn't.
 
 `benchmark.py` in this lab includes a `torch.compile` path so you can A/B against the stock diffusers baseline on the same prompt/seed.
 

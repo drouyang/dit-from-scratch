@@ -59,10 +59,15 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> tuple[float, int,
 
     compile_mode:
       None              -- pure Python WanPipeline.__call__ (the baseline)
+      "default"         -- + torch.compile with Inductor kernel fusion
+                           (no CUDA Graphs; CFG-safe with WanPipeline)
       "reduce-overhead" -- + torch.compile with CUDA graph capture
-                           (best mode for diffusion sampling loops)
+                           (BROKEN with WanPipeline's two-pass CFG: the second
+                            transformer call overwrites the first call's output
+                            buffer while it's still being read for extrapolation;
+                            you'd need to clone the transformer output to use it)
       "max-autotune"    -- + torch.compile with autotune
-                           (slowest compile, fastest steady-state)
+                           (slowest compile, fastest steady-state; no CUDA Graphs)
 
     Returns (gen_seconds, peak_gpu_bytes, output_path). For compiled runs we
     do a warmup call before timing so the reported number is steady-state,
@@ -199,7 +204,7 @@ def main():
     if not args.skip_diffusers:
         diff_secs, diff_mem, _ = run_diffusers(args)
     if not args.skip_compile:
-        comp_secs, comp_mem, _ = run_diffusers(args, compile_mode="reduce-overhead")
+        comp_secs, comp_mem, _ = run_diffusers(args, compile_mode="default")
     if not args.skip_sglang:
         sg_secs, sg_mem, _ = run_sglang(args)
 
