@@ -4,6 +4,8 @@
 
 This lab is **inference-only**. Every technique below targets generation latency on a fixed model. Acceleration techniques that overlap with *training* (FlashAttention, mixed precision, sequence parallelism, FSDP) live in lab 4.3 / 4.5.
 
+**4× 4090 (96 GB total VRAM) is the default** for this lab; single-GPU still covers the basic benchmark and the `torch.compile` deep dive, but the sequence-parallelism content (USP, Ring, Ulysses) needs multi-GPU.
+
 ## Acceleration over lab 4.1
 
 Lab 4.1 used `WanPipeline.from_pretrained(...).__call__(...)` directly. That's the readable, hackable, ~30-second-load reference path — and on a recent CUDA + PyTorch build it already gets you a fair amount for free:
@@ -19,8 +21,6 @@ What it *doesn't* get you, and what lab 4.2's deeper engines add:
 - Single-GPU only — no USP / Ring / Ulysses sequence parallelism, no layerwise weight offload.
 
 A production inference engine fixes all of those.
-
-**4× 4090 (96 GB total VRAM) is the default** for this lab; single-GPU still covers the basic benchmark and the `torch.compile` deep dive, but the sequence-parallelism content (USP, Ring, Ulysses) needs multi-GPU.
 
 ## The technique map
 
