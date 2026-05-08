@@ -33,11 +33,13 @@ Run:
 
 import argparse
 import logging
+import math
 import os
 import shutil
 import subprocess
 import time
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 
 # Same suppression block as lab4.1/inference_diffusers.py — these warnings are
@@ -67,17 +69,36 @@ import torch
 WAN_REPO = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 
 
+@dataclass
+class RunResult:
+    """Per-backend timing record. Any field can be NaN ("not measured")
+    or 0 ("not applicable"). The summary at the end of main() reads from
+    these — no scraping of stdout required."""
+    name: str
+    load_secs: float = float("nan")
+    warmup_secs: float = float("nan")
+    gen_secs: float = float("nan")
+    peak_mem: int = 0
+    out_path: str = ""
+    skipped: bool = False
+    note: str = ""
+
+
 def fmt_secs(s: float) -> str:
+    if not math.isfinite(s):
+        return "      —"
     return f"{s:6.1f}s"
 
 
 def fmt_mem(bytes_: int) -> str:
+    if not bytes_:
+        return "      —"
     return f"{bytes_ / 1e9:5.2f} GB"
 
 
 # ---------- diffusers baseline ------------------------------------------------
 
-def run_diffusers(args, *, compile_mode: str | None = None) -> tuple[float, int, str]:
+def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
     """Run stock diffusers WanPipeline, optionally with torch.compile.
 
     compile_mode:
@@ -106,8 +127,10 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> tuple[float, int,
     vae = AutoencoderKLWan.from_pretrained(WAN_REPO, subfolder="vae", torch_dtype=torch.float32)
     pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda")
     pipe.vae.enable_tiling()  # avoid VAE-decode OOM at 832x480 × 49 frames on a 24 GB 4090
-    print(f"  load:     {fmt_secs(time.time() - t0)}")
+    load_secs = time.time() - t0
+    print(f"  load:     {fmt_secs(load_secs)}")
 
+    warmup_secs = float("nan")
     if compile_mode is not None:
         pipe.transformer = torch.compile(pipe.transformer, mode=compile_mode)
         # Warmup pass — first call triggers graph capture / autotune. Use a
@@ -122,7 +145,8 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> tuple[float, int,
             guidance_scale=args.guidance,
             generator=torch.Generator("cuda").manual_seed(0),
         )
-        print(f"  warmup:   {fmt_secs(time.time() - tw)}")
+        warmup_secs = time.time() - tw
+        print(f"  warmup:   {fmt_secs(warmup_secs)}")
 
     torch.cuda.reset_peak_memory_stats()
     t1 = time.time()
@@ -145,15 +169,27 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> tuple[float, int,
     print(f"  peak VRAM:{fmt_mem(peak_mem):>10}")
     print(f"  saved {out_path}")
 
-    # Tear down so the next backend has the GPU to itself.
+    # Tear down so the next backend has the GPU to itself. With torch.compile
+    # we also need to flush Dynamo's compiled-artifact cache and gc Python-side
+    # references; otherwise the next backend OOMs even after empty_cache().
     del pipe, vae, output
+    if compile_mode is not None:
+        torch._dynamo.reset()
+    import gc; gc.collect()
     torch.cuda.empty_cache()
-    return gen_secs, peak_mem, out_path
+    return RunResult(
+        name=label,
+        load_secs=load_secs,
+        warmup_secs=warmup_secs,
+        gen_secs=gen_secs,
+        peak_mem=peak_mem,
+        out_path=out_path,
+    )
 
 
 # ---------- diffusers + torch.compile + CFG parallel (2 GPUs) -----------------
 
-def run_diffusers_cfg_parallel(args) -> tuple[float, int, str]:
+def run_diffusers_cfg_parallel(args) -> RunResult:
     """Two transformer copies on cuda:0 and cuda:1; conditional and unconditional
     forwards happen concurrently. Recovers the speedup that mode="reduce-overhead"
     can't deliver on a single GPU due to CUDA Graph aliasing on WAN's two-pass CFG.
@@ -171,15 +207,16 @@ def run_diffusers_cfg_parallel(args) -> tuple[float, int, str]:
 
     Memory: ~8–10 GB peak per GPU at 832×480 × 49 frames; fits 2× 4090 easily.
     """
+    label = "diffusers + torch.compile + CFG parallel (2 GPUs)"
     if torch.cuda.device_count() < 2:
-        print("\n=== diffusers + torch.compile + CFG parallel (2 GPUs) ===  (skipped — need ≥2 GPUs)")
-        return float("nan"), 0, ""
+        print(f"\n=== {label} ===  (skipped — need ≥2 GPUs)")
+        return RunResult(name=label, skipped=True, note="need ≥2 GPUs")
 
     import copy
     from diffusers import AutoencoderKLWan, WanPipeline
     from diffusers.utils import export_to_video
 
-    print("\n=== diffusers + torch.compile + CFG parallel (2 GPUs) ===")
+    print(f"\n=== {label} ===")
     t0 = time.time()
 
     # Load the pipeline on cuda:0. We use its text encoder, VAE, scheduler,
@@ -193,7 +230,8 @@ def run_diffusers_cfg_parallel(args) -> tuple[float, int, str]:
     transformer_1 = copy.deepcopy(pipe.transformer).to("cuda:1")
     transformer_0 = torch.compile(transformer_0, mode="default")
     transformer_1 = torch.compile(transformer_1, mode="default")
-    print(f"  load:     {fmt_secs(time.time() - t0)}")
+    load_secs = time.time() - t0
+    print(f"  load:     {fmt_secs(load_secs)}")
 
     # Encode prompt + negative prompt on cuda:0 (text encoder lives there).
     prompt_embeds_0, neg_embeds_0 = pipe.encode_prompt(
@@ -204,6 +242,13 @@ def run_diffusers_cfg_parallel(args) -> tuple[float, int, str]:
         device=torch.device("cuda:0"),
     )
     neg_embeds_1 = neg_embeds_0.to("cuda:1")                        # ship uncond text to cuda:1
+
+    # Offload the umT5-XXL text encoder to CPU now that we've encoded — frees
+    # ~11 GB on cuda:0 that we'll need for the compiled transformer + activations.
+    # The text encoder isn't called again during the sampling loop.
+    pipe.text_encoder.to("cpu")
+    import gc; gc.collect()
+    torch.cuda.empty_cache()
 
     # Latent shape: WAN-VAE has 4× temporal compression (with +1 anchor frame)
     # and 8× spatial.
@@ -252,7 +297,8 @@ def run_diffusers_cfg_parallel(args) -> tuple[float, int, str]:
     z_warm = make_noise(0)
     for t in pipe.scheduler.timesteps:
         z_warm = sampling_step(z_warm, t)
-    print(f"  warmup:   {fmt_secs(time.time() - tw)}")
+    warmup_secs = time.time() - tw
+    print(f"  warmup:   {fmt_secs(warmup_secs)}")
 
     # Real run
     pipe.scheduler.set_timesteps(args.steps, device="cuda:0")
@@ -284,25 +330,36 @@ def run_diffusers_cfg_parallel(args) -> tuple[float, int, str]:
     print(f"  saved {out_path}")
 
     del pipe, vae, transformer_0, transformer_1
+    torch._dynamo.reset()
+    gc.collect()
     torch.cuda.empty_cache()
-    return gen_secs, peak_mem, out_path
+    return RunResult(
+        name=label,
+        load_secs=load_secs,
+        warmup_secs=warmup_secs,
+        gen_secs=gen_secs,
+        peak_mem=peak_mem,
+        out_path=out_path,
+        note="peak VRAM = max across both GPUs",
+    )
 
 
 # ---------- SGLang via subprocess ---------------------------------------------
 
-def run_sglang(args) -> tuple[float, int, str]:
+def run_sglang(args) -> RunResult:
     """Drive SGLang via the documented `sglang generate` CLI.
 
     Memory measurement here is approximate — we can't use
     torch.cuda.max_memory_allocated across a subprocess, so we time the
     whole thing and trust SGLang's own profiling for VRAM.
     """
+    label = "sglang-diffusion"
     if shutil.which("sglang") is None:
-        print("\n=== sglang ===  (skipped — `sglang` not in PATH)")
+        print(f"\n=== {label} ===  (skipped — `sglang` not in PATH)")
         print("  install with:  uv pip install \"sglang[diffusion]\" --prerelease=allow")
-        return float("nan"), 0, ""
+        return RunResult(name=label, skipped=True, note="sglang not in PATH")
 
-    print("\n=== sglang ===")
+    print(f"\n=== {label} ===")
     out_path = "out_sglang.mp4"
     cmd = [
         "sglang", "generate",
@@ -328,11 +385,19 @@ def run_sglang(args) -> tuple[float, int, str]:
     if completed.returncode != 0:
         print(f"  FAILED (exit {completed.returncode}):")
         print(completed.stderr.splitlines()[-20:] if completed.stderr else "  (no stderr)")
-        return float("nan"), 0, ""
+        return RunResult(name=label, skipped=True, note=f"exit {completed.returncode}")
 
     print(f"  wall:     {fmt_secs(wall)}  (includes load + generate, can't separate)")
     print(f"  saved {out_path}")
-    return wall, 0, out_path
+    # SGLang runs in a subprocess so we can't break out load vs generate, and
+    # peak VRAM isn't visible to torch in this process. Report the total wall
+    # in gen_secs with a note.
+    return RunResult(
+        name=label,
+        gen_secs=wall,
+        out_path=out_path,
+        note="wall = load + generate (subprocess, can't separate)",
+    )
 
 
 # ---------- main --------------------------------------------------------------
@@ -363,32 +428,67 @@ def main():
     print(f"prompt: {args.prompt!r}")
     print(f"shape:  {args.num_frames} frames @ {args.width}×{args.height},  steps={args.steps},  cfg={args.guidance},  seed={args.seed}")
 
-    diff_secs = comp_secs = cfgp_secs = sg_secs = float("nan")
-    diff_mem  = comp_mem  = cfgp_mem  = sg_mem  = 0
+    results: list[RunResult] = []
     if not args.skip_diffusers:
-        diff_secs, diff_mem, _ = run_diffusers(args)
+        results.append(run_diffusers(args))
     if not args.skip_compile:
-        comp_secs, comp_mem, _ = run_diffusers(args, compile_mode="default")
+        results.append(run_diffusers(args, compile_mode="default"))
     if not args.skip_cfg_parallel:
-        cfgp_secs, cfgp_mem, _ = run_diffusers_cfg_parallel(args)
+        results.append(run_diffusers_cfg_parallel(args))
     if not args.skip_sglang:
-        sg_secs, sg_mem, _ = run_sglang(args)
+        results.append(run_sglang(args))
 
-    print("\n=== comparison ===")
-    print(f"{'backend':<36} {'wall':>10}  {'peak VRAM':>14}")
-    print(f"{'-'*62}")
-    print(f"{'diffusers':<36} {fmt_secs(diff_secs):>10}  {fmt_mem(diff_mem) if diff_mem else '         —':>14}")
-    print(f"{'diffusers + torch.compile':<36} {fmt_secs(comp_secs):>10}  {fmt_mem(comp_mem) if comp_mem else '         —':>14}")
-    print(f"{'diffusers + compile + CFG parallel':<36} {fmt_secs(cfgp_secs):>10}  {fmt_mem(cfgp_mem) if cfgp_mem else '         —':>14}")
-    print(f"{'sglang-diffusion':<36} {fmt_secs(sg_secs):>10}  {'(see sglang logs)':>14}")
+    # Summary block printed at the very end. Pulls from the RunResult records,
+    # so even if intermediate stdout is cluttered (progress bars, dynamo notes,
+    # subprocess output), this final block is clean and self-contained.
+    print("\n" + "=" * 88)
+    print("SUMMARY")
+    print("=" * 88)
+    print(f"prompt: {args.prompt!r}")
+    print(f"shape:  {args.num_frames} frames @ {args.width}×{args.height},  steps={args.steps},  cfg={args.guidance},  seed={args.seed}")
+    print()
+    header = f"{'backend':<42} {'load':>8} {'warmup':>8} {'generate':>9} {'peak VRAM':>10}"
+    print(header)
+    print("-" * len(header))
+    for r in results:
+        if r.skipped:
+            print(f"{r.name:<42} {'(skipped: ' + r.note + ')':>38}")
+            continue
+        print(
+            f"{r.name:<42} "
+            f"{fmt_secs(r.load_secs):>8} "
+            f"{fmt_secs(r.warmup_secs):>8} "
+            f"{fmt_secs(r.gen_secs):>9} "
+            f"{fmt_mem(r.peak_mem):>10}"
+        )
 
-    if diff_secs == diff_secs:  # finite
-        if comp_secs == comp_secs:
-            print(f"\ntorch.compile speedup:        {diff_secs / comp_secs:.2f}×  (vs diffusers baseline)")
-        if cfgp_secs == cfgp_secs:
-            print(f"compile + CFG parallel:       {diff_secs / cfgp_secs:.2f}×  (vs diffusers baseline)")
-        if sg_secs == sg_secs:
-            print(f"sglang:                       {diff_secs / sg_secs:.2f}×  (vs diffusers baseline)")
+    # Speedups vs the plain-diffusers baseline (steady-state generate seconds).
+    base = next(
+        (r for r in results
+         if r.name == "diffusers" and not r.skipped and math.isfinite(r.gen_secs)),
+        None,
+    )
+    if base is not None:
+        print()
+        for r in results:
+            if r is base or r.skipped or not math.isfinite(r.gen_secs):
+                continue
+            print(f"  speedup vs diffusers:  {base.gen_secs / r.gen_secs:5.2f}×   ({r.name})")
+
+    # Per-backend notes (e.g. "wall = load + generate" for sglang).
+    notes = [r for r in results if r.note and not r.skipped]
+    if notes:
+        print()
+        for r in notes:
+            print(f"  note ({r.name}): {r.note}")
+
+    # Output paths, so you don't have to grep stdout to find the videos.
+    saved = [r for r in results if r.out_path]
+    if saved:
+        print()
+        for r in saved:
+            print(f"  output: {r.out_path:<40} ({r.name})")
+    print("=" * 88)
 
 
 if __name__ == "__main__":
