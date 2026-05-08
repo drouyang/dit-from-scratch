@@ -136,6 +136,22 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
     vae = AutoencoderKLWan.from_pretrained(WAN_REPO, subfolder="vae", torch_dtype=torch.float32)
     pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda")
     pipe.vae.enable_tiling()  # avoid VAE-decode OOM at 832x480 × 49 frames on a 24 GB 4090
+
+    # Pre-encode the prompts and offload umT5-XXL (~11 GB) to CPU before
+    # sampling. Without this, the compile-mode run OOMs on a 24 GB 4090 — the
+    # text encoder weights sit unused on cuda:0 while the compiled
+    # transformer's activations + Inductor caches need every spare GB.
+    # We do it for the baseline too so peak-VRAM rows are comparable.
+    prompt_embeds, neg_embeds = pipe.encode_prompt(
+        prompt=args.prompt,
+        negative_prompt=getattr(args, "negative_prompt", "") or "",
+        do_classifier_free_guidance=True,
+        num_videos_per_prompt=1,
+        device=torch.device("cuda"),
+    )
+    pipe.text_encoder.to("cpu")
+    torch.cuda.empty_cache()
+
     load_secs = time.time() - t0
     print(f"  load:     {fmt_secs(load_secs)}")
 
@@ -147,7 +163,8 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
         print(f"  warming up torch.compile (this is the slow part — ~30-60s)...")
         tw = time.time()
         _ = pipe(
-            prompt=args.prompt,
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=neg_embeds,
             height=args.height, width=args.width,
             num_frames=args.num_frames,
             num_inference_steps=2,                  # just enough to compile
@@ -161,7 +178,8 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
     t1 = time.time()
     generator = torch.Generator("cuda").manual_seed(args.seed)
     output = pipe(
-        prompt=args.prompt,
+        prompt_embeds=prompt_embeds,
+        negative_prompt_embeds=neg_embeds,
         height=args.height, width=args.width,
         num_frames=args.num_frames,
         num_inference_steps=args.steps,
