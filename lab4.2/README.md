@@ -336,12 +336,3 @@ Every technique in this lab is for inference. The training-relevant subset:
 | **[vLLM-Diffusion](https://github.com/vllm-project/vllm)** | continuous-batching engine (LLM heritage) | batch-serving; less mature for video DiT as of mid-2026 |
 
 SGLang-Diffusion sits at the upper end of the *full-engine* end of this spectrum. OneDiff is the easy on-ramp; xDiT is what you reach for when you only need parallelism; TensorRT is for "I'll pay setup cost for max single-GPU throughput."
-
-### Where to go deeper
-
-- [LMSYS SGLang-Diffusion blog](https://www.lmsys.org/blog/2025-11-07-sglang-diffusion/) — original release post; the optimization list and benchmark plots.
-- [SGLang-Diffusion docs](https://sgl-project.github.io/diffusion/) — install, CLI, and cookbooks for WAN 2.1, WAN 2.2, FLUX, Qwen-Image variants.
-- [FlashAttention paper (Dao 2022)](https://arxiv.org/abs/2205.14135) — the tiled-softmax trick, still the most important attention kernel.
-- [Cache-DiT paper](https://arxiv.org/abs/2410.05317) and [`vipshop/cache-dit`](https://github.com/vipshop/cache-dit) — the diffusion-specific caching insight.
-- [xDiT / xfuser](https://github.com/xdit-project/xDiT) — diffusion sequence parallelism.
-- [SageAttention paper](https://arxiv.org/abs/2410.02367) — quantized attention.
