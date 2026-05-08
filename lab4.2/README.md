@@ -20,6 +20,8 @@ What it *doesn't* get you, and what lab 4.2's deeper engines add:
 
 A production inference engine fixes all of those.
 
+**4× 4090 (96 GB total VRAM) is the default** for this lab; single-GPU still covers the basic benchmark and the `torch.compile` deep dive, but the sequence-parallelism content (USP, Ring, Ulysses) needs multi-GPU.
+
 ## The technique map
 
 Every optimization in SGLang-Diffusion comes from somewhere. Most are upstream libraries; SGLang-Diffusion is the orchestration layer that picks and composes them.
@@ -55,19 +57,6 @@ What makes SGLang-Diffusion teachable: every optimization above is independently
 | Text-encoder offload | `--text-encoder-cpu-offload`, `--pin-cpu-memory` |
 
 Useful learning exercise: pick one flag, run the same prompt with and without it, compare wall clock. The `benchmark.py` in this lab is a starting point.
-
-## Compute reality
-
-Part 4's compute target — and the lab where it earns its keep. **4× 4090 (96 GB total VRAM)** is the default; single-GPU still covers the basic benchmark and the `torch.compile` deep dive, but the sequence-parallelism content (USP, Ring, Ulysses) needs multi-GPU.
-
-| Hardware | What works |
-|---|---|
-| **4× 4090** (lab default) | Everything: single-GPU optimizations (FlashAttention, Cache-DiT, layerwise offload), `torch.compile`, **and** USP / Ring / Ulysses across all 4 cards. |
-| **1× 4090 / 4080 / 3090** (≥12 GB VRAM) | Single-GPU paths only. Sequence parallelism is read-only at this tier. |
-| **B200 / H200** | Required for WAN 2.2-A14B (the MoE flagship). T2V-1.3B doesn't need it. |
-| **Apple M3 / MPS** | Stock diffusers works (slowly). SGLang-Diffusion's MPS backend exists but is the courtesy backend — most kernels won't apply. |
-
-CUDA-required for the meaningful optimizations.
 
 ## Setup
 
