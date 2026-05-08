@@ -89,38 +89,35 @@ shape:  49 frames @ 832×480,  steps=30,  cfg=5.0,  seed=42
   peak VRAM:  11.42 GB
   saved out_diffusers_compile_default.mp4
 
-=== diffusers + torch.compile + CFG parallel (2 GPUs) ===
-  load:        47.5s
-  warming up torch.compile (~30-60s × 2 GPUs in parallel)...
-  warmup:      52.1s
-  generate:    78.4s (steady-state, post-warmup)
-  peak VRAM:   9.65 GB  (max across both GPUs)
-  saved out_cfg_parallel.mp4
-
-=== sglang ===
+=== sglang-diffusion ===
   $ sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers ...
   wall:       82.1s  (includes load + generate, can't separate)
   saved out_sglang.mp4
+
+=== sglang-diffusion --enable-cfg-parallel ===
+  $ sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers ... --enable-cfg-parallel
+  wall:       49.6s  (includes load + generate, 2 GPUs)
+  saved out_sglang_cfgp.mp4
 
 === comparison ===
 backend                                  wall     peak VRAM
 ----------------------------------------------------------
 diffusers                               220.4s     10.78 GB
 diffusers + torch.compile               132.8s     11.42 GB
-diffusers + compile + CFG parallel       78.4s      9.65 GB
 sglang-diffusion                         82.1s    (see sglang logs)
+sglang-diffusion --enable-cfg-parallel   49.6s    (see sglang logs)
 
-torch.compile speedup:        1.66×  (vs diffusers baseline)
-compile + CFG parallel:       2.81×  (vs diffusers baseline)
-sglang:                       2.69×  (vs diffusers baseline)
+torch.compile speedup:               1.66×  (vs diffusers baseline)
+sglang:                              2.69×  (vs diffusers baseline)
+sglang + cfg-parallel (2 GPUs):      4.44×  (vs diffusers baseline)
 ```
 
 Numbers vary by GPU, drivers, and SGLang version. The shape:
 - `torch.compile` alone gets ~1.5–1.7× (Inductor kernel fusion).
-- `torch.compile + CFG parallel` gets ~2.5–2.9× (kernel fusion *and* the two CFG forwards run concurrently on separate GPUs — exactly the speedup `mode="reduce-overhead"` would have given on a single GPU if it didn't break with WAN's CFG aliasing). Auto-skipped on single-GPU machines.
-- `sglang-diffusion` gets ~2.5–3× even on a single GPU by composing kernels (FlashInfer RoPE, fused QKV/QK-norm/SwiGLU) and Cache-DiT that `torch.compile` can't reach.
+- `sglang-diffusion` gets ~2.5–3× on a single GPU by composing kernels (FlashInfer RoPE, fused QKV/QK-norm/SwiGLU) and Cache-DiT that `torch.compile` can't reach.
+- `sglang --enable-cfg-parallel` adds another ~1.6× on top of single-GPU SGLang by running the conditional and unconditional CFG forwards on separate GPUs concurrently. Auto-skipped on single-GPU machines.
 
-Skip flags: `--skip-compile`, `--skip-cfg-parallel`, `--skip-sglang`.
+Skip flags: `--skip-compile`, `--skip-sglang`, `--skip-sglang-cfgp`.
 
 ## Toggle map (the SGLang-Diffusion flags)
 
@@ -132,6 +129,7 @@ What makes SGLang-Diffusion teachable: every optimization in the technique map u
 | Attention backend | `--attention-backend {fa,sage,xformers,native,_flash_3_hub}` |
 | Layerwise weight offload | `--dit-layerwise-offload true` |
 | Sequence parallelism | `--sp-degree N`, `--ulysses-degree N`, `--ring-degree N` |
+| CFG parallelism (run cond + uncond on separate GPUs) | `--enable-cfg-parallel` |
 | Tensor parallelism | `--tp-size N` |
 | VAE memory | `--vae-tiling`, `--vae-slicing` |
 | Text-encoder offload | `--text-encoder-cpu-offload`, `--pin-cpu-memory` |
@@ -322,6 +320,49 @@ All four should produce identical output for the same seed (sequence parallelism
 - **[DeepSpeed-Ulysses paper (Jacobs et al. 2023)](https://arxiv.org/abs/2309.14509)** — the all-to-all scheme.
 - **[`xfuser` / xDiT source](https://github.com/xdit-project/xDiT)** — production implementation; the diffusion-specific glue (CFG-aware SP, 3D RoPE handling) lives here.
 - **[`Wan-Video/Wan2.2/wan/distributed/`](https://github.com/Wan-Video/Wan2.2/tree/main/wan/distributed)** — a real production team's adaptation of xfuser; smaller surface area than xfuser itself.
+
+## Deep dive: CFG parallel (cond + uncond on separate GPUs)
+
+A coarser multi-GPU pattern than USP, and orthogonal to it. The classifier-free-guidance step needs **two** transformer forwards per sampling step — one with the prompt, one with the negative prompt — and the two are independent until the extrapolation. So you can put one branch on each of two GPUs and run them concurrently:
+
+```
+single-GPU CFG:                       CFG parallel:
+                                       
+   transformer(prompt)        ──►      GPU 0: transformer(prompt)    ┐  concurrent
+   ↓ wait                                                            │  (different
+   transformer(neg)           ──►      GPU 1: transformer(neg)       ┘   streams)
+   ↓                                       ↓
+   v_uncond + s·(v_cond − v_uncond)         gather → v_uncond + s·(v_cond − v_uncond)
+```
+
+Wall clock per step drops from ~2T to ~T (where T is one forward), at a memory cost of an extra transformer copy on the second GPU. SGLang-Diffusion exposes this as `--enable-cfg-parallel`. xfuser/xDiT calls it `cfg_degree`.
+
+### What `--enable-cfg-parallel` does internally
+
+The pattern in plain PyTorch — what SGLang-Diffusion's runtime composes around your prompt and the model:
+
+```python
+# Two transformer copies (deepcopy, one per GPU)
+transformer_0 = pipe.transformer.to("cuda:0")
+transformer_1 = copy.deepcopy(pipe.transformer).to("cuda:1")
+
+# Inside the sampling loop, per step:
+z_t_1 = z_t.to("cuda:1", non_blocking=True)
+cond   = transformer_0(z_t,   t, encoder_hidden_states=prompt_embeds_0)[0]
+uncond_remote = transformer_1(z_t_1, t, encoder_hidden_states=neg_embeds_1)[0]
+uncond = uncond_remote.to("cuda:0")                          # implicit sync
+noise  = uncond + guidance * (cond - uncond)
+```
+
+The two `transformer_*(...)` calls dispatch their work to different CUDA streams on different devices and return immediately (CUDA is async). The actual GPU compute on the two cards runs **in parallel**. The `.to("cuda:0")` on the unconditional output is what synchronizes — it blocks until cuda:1's transformer finishes, then memcpies the result.
+
+That's it. No `torchrun`, no `torch.distributed`, no NCCL — just two CUDA contexts coordinated implicitly through PyTorch's stream model. SGLang-Diffusion's implementation adds:
+
+- A reasonable per-GPU memory budget (offloading the text encoder after encoding so the transformer + activations have room).
+- Composability with USP (CFG parallel × Ring × Ulysses, all configurable via flags).
+- Production-grade error handling for the case where the two GPUs go out of sync.
+
+For learning the *mechanics*, the snippet above is the whole story. For *running it*, use `--enable-cfg-parallel`.
 
 ## Discussion
 

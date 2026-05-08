@@ -214,180 +214,30 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
     )
 
 
-# ---------- diffusers + torch.compile + CFG parallel (2 GPUs) -----------------
-
-def run_diffusers_cfg_parallel(args) -> RunResult:
-    """Two transformer copies on cuda:0 and cuda:1; conditional and unconditional
-    forwards happen concurrently. Recovers the speedup that mode="reduce-overhead"
-    can't deliver on a single GPU due to CUDA Graph aliasing on WAN's two-pass CFG.
-
-    Bypasses WanPipeline.__call__ and reimplements the sampling loop manually so
-    we can dispatch the two CFG branches to different devices. Each transformer
-    only sees ONE forward per step → no aliasing → mode="default" (or even
-    "reduce-overhead") works cleanly.
-
-    Compute pattern:
-        cuda:0 holds transformer copy 0, runs the conditional forward
-        cuda:1 holds transformer copy 1, runs the unconditional forward
-        Both forwards dispatch concurrently from one Python thread (CUDA is async).
-        After both finish, uncond → cuda:0, do CFG extrapolation, scheduler step.
-
-    Memory: ~8–10 GB peak per GPU at 832×480 × 49 frames; fits 2× 4090 easily.
-    """
-    label = "diffusers + torch.compile + CFG parallel (2 GPUs)"
-    if torch.cuda.device_count() < 2:
-        print(f"\n=== {label} ===  (skipped — need ≥2 GPUs)")
-        return RunResult(name=label, skipped=True, note="need ≥2 GPUs")
-
-    import copy
-    from diffusers import AutoencoderKLWan, WanPipeline
-    from diffusers.utils import export_to_video
-
-    print(f"\n=== {label} ===")
-    t0 = time.time()
-
-    # Load the pipeline on cuda:0. We use its text encoder, VAE, scheduler,
-    # video_processor, and one transformer copy. Then deepcopy the transformer
-    # to cuda:1 and compile both.
-    vae = AutoencoderKLWan.from_pretrained(WAN_REPO, subfolder="vae", torch_dtype=torch.float32)
-    pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda:0")
-    pipe.vae.enable_tiling()                                       # avoid VAE-decode OOM
-
-    transformer_0 = pipe.transformer                                # already on cuda:0
-    transformer_1 = copy.deepcopy(pipe.transformer).to("cuda:1")
-    transformer_0 = torch.compile(transformer_0, mode="default")
-    transformer_1 = torch.compile(transformer_1, mode="default")
-    load_secs = time.time() - t0
-    print(f"  load:     {fmt_secs(load_secs)}")
-
-    # Encode prompt + negative prompt on cuda:0 (text encoder lives there).
-    prompt_embeds_0, neg_embeds_0 = pipe.encode_prompt(
-        prompt=args.prompt,
-        negative_prompt=args.negative_prompt or "",
-        do_classifier_free_guidance=True,
-        num_videos_per_prompt=1,
-        device=torch.device("cuda:0"),
-    )
-    neg_embeds_1 = neg_embeds_0.to("cuda:1")                        # ship uncond text to cuda:1
-
-    # Offload the umT5-XXL text encoder to CPU now that we've encoded — frees
-    # ~11 GB on cuda:0 that we'll need for the compiled transformer + activations.
-    # The text encoder isn't called again during the sampling loop.
-    pipe.text_encoder.to("cpu")
-    import gc; gc.collect()
-    torch.cuda.empty_cache()
-
-    # Latent shape: WAN-VAE has 4× temporal compression (with +1 anchor frame)
-    # and 8× spatial.
-    num_channels_latents = transformer_0.config.in_channels         # 16 for WAN 2.1
-    num_latent_frames = (args.num_frames - 1) // 4 + 1
-    latent_shape = (
-        1, num_channels_latents,
-        num_latent_frames,
-        args.height // 8, args.width // 8,
-    )
-
-    def make_noise(seed):
-        return torch.randn(
-            latent_shape, dtype=torch.bfloat16, device="cuda:0",
-            generator=torch.Generator("cuda:0").manual_seed(seed),
-        )
-
-    def sampling_step(z_t, t):
-        """One CFG step: dispatch cond on cuda:0 and uncond on cuda:1, gather,
-        extrapolate. Both transformer calls return immediately (CUDA is async);
-        the .to("cuda:0") on the uncond output implicitly synchronizes."""
-        z_t_1 = z_t.to("cuda:1", non_blocking=True)
-        timestep_0 = t.expand(z_t.shape[0]).to("cuda:0")
-        timestep_1 = t.expand(z_t.shape[0]).to("cuda:1")
-
-        cond_pred = transformer_0(
-            hidden_states=z_t,
-            timestep=timestep_0,
-            encoder_hidden_states=prompt_embeds_0,
-            return_dict=False,
-        )[0]
-        uncond_remote = transformer_1(
-            hidden_states=z_t_1,
-            timestep=timestep_1,
-            encoder_hidden_states=neg_embeds_1,
-            return_dict=False,
-        )[0]
-        uncond_pred = uncond_remote.to("cuda:0")                    # implicit sync
-        noise_pred = uncond_pred + args.guidance * (cond_pred - uncond_pred)
-        return pipe.scheduler.step(noise_pred, t, z_t, return_dict=False)[0]
-
-    # Warmup the compile (2-step run with throwaway noise)
-    print(f"  warming up torch.compile (~30-60s × 2 GPUs in parallel)...")
-    tw = time.time()
-    pipe.scheduler.set_timesteps(2, device="cuda:0")
-    z_warm = make_noise(0)
-    for t in pipe.scheduler.timesteps:
-        z_warm = sampling_step(z_warm, t)
-    warmup_secs = time.time() - tw
-    print(f"  warmup:   {fmt_secs(warmup_secs)}")
-
-    # Real run
-    pipe.scheduler.set_timesteps(args.steps, device="cuda:0")
-    z_t = make_noise(args.seed)
-
-    torch.cuda.reset_peak_memory_stats(0)
-    torch.cuda.reset_peak_memory_stats(1)
-
-    t1 = time.time()
-    for t in pipe.scheduler.timesteps:
-        z_t = sampling_step(z_t, t)
-    gen_secs = time.time() - t1
-    peak_mem = max(torch.cuda.max_memory_allocated(0), torch.cuda.max_memory_allocated(1))
-
-    # VAE decode on cuda:0 (using WAN-VAE's mean/std denormalization)
-    latents_mean = torch.tensor(pipe.vae.config.latents_mean).view(
-        1, pipe.vae.config.z_dim, 1, 1, 1).to("cuda:0", torch.bfloat16)
-    latents_std = 1.0 / torch.tensor(pipe.vae.config.latents_std).view(
-        1, pipe.vae.config.z_dim, 1, 1, 1).to("cuda:0", torch.bfloat16)
-    z_t = z_t / latents_std + latents_mean
-    video = pipe.vae.decode(z_t.to(pipe.vae.dtype), return_dict=False)[0]
-    output = pipe.video_processor.postprocess_video(video, output_type="np")[0]
-
-    out_path = "out_cfg_parallel.mp4"
-    export_to_video(output, out_path, fps=args.fps)
-
-    print(f"  generate: {fmt_secs(gen_secs)} (steady-state, post-warmup)")
-    print(f"  peak VRAM:{fmt_mem(peak_mem):>10}  (max across both GPUs)")
-    print(f"  saved {out_path}")
-
-    del pipe, vae, transformer_0, transformer_1
-    torch._dynamo.reset()
-    gc.collect()
-    torch.cuda.empty_cache()
-    return RunResult(
-        name=label,
-        load_secs=load_secs,
-        warmup_secs=warmup_secs,
-        gen_secs=gen_secs,
-        peak_mem=peak_mem,
-        out_path=out_path,
-        note="peak VRAM = max across both GPUs",
-    )
-
-
 # ---------- SGLang via subprocess ---------------------------------------------
 
-def run_sglang(args) -> RunResult:
+def run_sglang(args, *, cfg_parallel: bool = False) -> RunResult:
     """Drive SGLang via the documented `sglang generate` CLI.
+
+    cfg_parallel=True passes `--enable-cfg-parallel` so the conditional and
+    unconditional CFG forwards run on separate GPUs concurrently. Auto-skips
+    on single-GPU systems.
 
     Memory measurement here is approximate — we can't use
     torch.cuda.max_memory_allocated across a subprocess, so we time the
     whole thing and trust SGLang's own profiling for VRAM.
     """
-    label = "sglang-diffusion"
+    label = "sglang-diffusion" + (" --enable-cfg-parallel" if cfg_parallel else "")
+    if cfg_parallel and torch.cuda.device_count() < 2:
+        print(f"\n=== {label} ===  (skipped — need ≥2 GPUs)")
+        return RunResult(name=label, skipped=True, note="need ≥2 GPUs")
     if shutil.which("sglang") is None:
         print(f"\n=== {label} ===  (skipped — `sglang` not in PATH)")
         print("  install with:  uv pip install \"sglang[diffusion]\" --prerelease=allow")
         return RunResult(name=label, skipped=True, note="sglang not in PATH")
 
     print(f"\n=== {label} ===")
-    out_path = "out_sglang.mp4"
+    out_path = "out_sglang_cfgp.mp4" if cfg_parallel else "out_sglang.mp4"
     cmd = [
         "sglang", "generate",
         "--model-path", WAN_REPO,
@@ -400,6 +250,8 @@ def run_sglang(args) -> RunResult:
         "--seed", str(args.seed),
         "--save-output", out_path,
     ]
+    if cfg_parallel:
+        cmd.append("--enable-cfg-parallel")
     # The exact flag names above are documented in
     # https://sgl-project.github.io/diffusion/api/cli.html — but flag names do
     # drift across SGLang releases. If `sglang generate --help` shows
@@ -442,9 +294,9 @@ def main():
     p.add_argument("--skip-diffusers", action="store_true")
     p.add_argument("--skip-compile",   action="store_true",
                    help="Skip the diffusers + torch.compile run (~1-2 min extra)")
-    p.add_argument("--skip-cfg-parallel", action="store_true",
-                   help="Skip the 2-GPU CFG-parallel run (auto-skipped on single-GPU)")
     p.add_argument("--skip-sglang",    action="store_true")
+    p.add_argument("--skip-sglang-cfgp", action="store_true",
+                   help="Skip the SGLang --enable-cfg-parallel run (auto-skipped on single-GPU)")
     p.add_argument("--negative-prompt", default="",
                    help="Negative prompt text. Empty string uses the model's default.")
     args = p.parse_args()
@@ -460,10 +312,10 @@ def main():
         results.append(run_diffusers(args))
     if not args.skip_compile:
         results.append(run_diffusers(args, compile_mode="default"))
-    if not args.skip_cfg_parallel:
-        results.append(run_diffusers_cfg_parallel(args))
     if not args.skip_sglang:
         results.append(run_sglang(args))
+    if not args.skip_sglang_cfgp:
+        results.append(run_sglang(args, cfg_parallel=True))
 
     # Summary block printed at the very end. Pulls from the RunResult records,
     # so even if intermediate stdout is cluttered (progress bars, dynamo notes,
