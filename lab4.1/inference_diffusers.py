@@ -10,6 +10,23 @@ Memory: ~12 GB VRAM. Validated on 4090, A10, A100, H100.
 """
 
 import argparse
+import warnings
+
+# Diffusers' attention_dispatch.py uses functools.lru_cache, which torch.compile's
+# Dynamo flags as a "potential silent-incorrectness" risk on every call. The
+# diffusers maintainers are aware; in our use the cached function is just a
+# version check, so the warning is noise.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Dynamo detected a call to a `functools\.lru_cache`-wrapped function.*",
+    category=UserWarning,
+)
+# WAN's diffusers checkpoint is plain bf16/fp32 safetensors — torchao is only
+# needed to deserialize torchao-quantized checkpoints, which we don't use.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Unable to import `torchao` Tensor objects.*",
+)
 
 import torch
 from diffusers import AutoencoderKLWan, WanPipeline
