@@ -114,10 +114,8 @@ sglang + cfg-parallel (2 GPUs):      4.44×  (vs diffusers baseline)
 
 Numbers vary by GPU, drivers, and SGLang version. The shape:
 - `torch.compile` alone gets ~1.5–1.7× (Inductor kernel fusion).
-- `sglang-diffusion` gets ~2.5–3× on a single GPU by composing kernels (FlashInfer RoPE, fused QKV/QK-norm/SwiGLU) and Cache-DiT that `torch.compile` can't reach.
+- `sglang-diffusion` gets ~2.5–3× on a single GPU via its custom inference runtime — fused/quantized kernels and attention-backend choices beyond what `torch.compile` reaches. Per-technique attribution is in the A/B exercises section below.
 - `sglang --enable-cfg-parallel` adds another ~1.6× on top of single-GPU SGLang by running the conditional and unconditional CFG forwards on separate GPUs concurrently. Auto-skipped on single-GPU machines.
-
-Skip flags: `--skip-compile`, `--skip-sglang`, `--skip-sglang-cfgp`.
 
 ## Toggle map (the SGLang-Diffusion flags)
 
