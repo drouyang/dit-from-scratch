@@ -24,19 +24,19 @@ A production inference engine fixes all of those.
 
 Every optimization in SGLang-Diffusion comes from somewhere. Most are upstream libraries; SGLang-Diffusion is the orchestration layer that picks and composes them.
 
-| Technique | Where it comes from | What it does | Maps back to |
-|---|---|---|---|
-| **FlashAttention 2/3** | [`Dao-AILab/flash-attention`](https://github.com/Dao-AILab/flash-attention) — external | Tiled softmax over Q@Kᵀ that never materializes the full attention matrix. Core LLM-serving primitive. | lab 1.3 (attention math) |
-| **SageAttention 2/3** | [`thu-ml/SageAttention`](https://github.com/thu-ml/SageAttention) — external | Quantized attention (INT8 / FP8 Q/K/V). Cuts attention FLOPs and memory at the cost of <1% quality. | lab 1.3 (attention math) |
-| **FlashInfer RoPE** | [`flashinfer-ai/flashinfer`](https://github.com/flashinfer-ai/flashinfer) — external | Inplace, fused rotary embedding. Replaces ~5 PyTorch ops with one kernel. | lab 3.1 (RoPE-2D) |
-| **Fused QKV** | model-adapter pattern, not a library | One `Linear(hidden, 3·hidden)` + split, instead of three `Linear`s. | lab 1.3 (Q/K/V projection) |
-| **Fused gate+up+SiLU** (SwiGLU) | usually `flashinfer.silu_and_mul` | One kernel for `silu(gate(x)) * up(x)`. | lab 1.4 (FFN block) |
-| **JIT QK-norm kernel** | in-house Triton / `torch.compile` | Fuses the per-head Q/K RMSNorm that some DiT variants use. | lab 1.3 (norm + attention) |
-| **Custom timestep CUDA kernel** | in-house | Sinusoidal `t` embedding written as one CUDA kernel instead of many tiny PyTorch ops. | lab 1.1 (sinusoidal embed) |
-| **Cache-DiT** | [`vipshop/cache-dit`](https://github.com/vipshop/cache-dit) — external | DiT-specific feature caching: skip recomputing block outputs that haven't changed across diffusion steps. ~1.7× alone in the SGLang-Diffusion blog. | new — diffusion-specific |
-| **Layerwise weight offload** | in-house orchestration | Prefetch layer N+1 onto GPU during layer N's compute. Hides PCIe transfer cost. | new — production-only |
-| **Sequence parallelism** (Ulysses + Ring USP) | [`xfuser` / xDiT](https://github.com/xdit-project/xDiT) — external (DeepSpeed-Ulysses lineage) | Shard the long sequence (long video → many tokens) across GPUs along the sequence dim. | new — covered conceptually here |
-| **Tensor parallelism** | standard | Shard linear-layer weights across GPUs. | new — covered conceptually here |
+| Technique | Where it comes from | What it does |
+|---|---|---|
+| **FlashAttention 2/3** | [`Dao-AILab/flash-attention`](https://github.com/Dao-AILab/flash-attention) — external | Tiled softmax over Q@Kᵀ that never materializes the full attention matrix. Core LLM-serving primitive. |
+| **SageAttention 2/3** | [`thu-ml/SageAttention`](https://github.com/thu-ml/SageAttention) — external | Quantized attention (INT8 / FP8 Q/K/V). Cuts attention FLOPs and memory at the cost of <1% quality. |
+| **FlashInfer RoPE** | [`flashinfer-ai/flashinfer`](https://github.com/flashinfer-ai/flashinfer) — external | Inplace, fused rotary embedding. Replaces ~5 PyTorch ops with one kernel. |
+| **Fused QKV** | model-adapter pattern, not a library | One `Linear(hidden, 3·hidden)` + split, instead of three `Linear`s. |
+| **Fused gate+up+SiLU** (SwiGLU) | usually `flashinfer.silu_and_mul` | One kernel for `silu(gate(x)) * up(x)`. |
+| **JIT QK-norm kernel** | in-house Triton / `torch.compile` | Fuses the per-head Q/K RMSNorm that some DiT variants use. |
+| **Custom timestep CUDA kernel** | in-house | Sinusoidal `t` embedding written as one CUDA kernel instead of many tiny PyTorch ops. |
+| **Cache-DiT** | [`vipshop/cache-dit`](https://github.com/vipshop/cache-dit) — external | DiT-specific feature caching: skip recomputing block outputs that haven't changed across diffusion steps. ~1.7× alone in the SGLang-Diffusion blog. |
+| **Layerwise weight offload** | in-house orchestration | Prefetch layer N+1 onto GPU during layer N's compute. Hides PCIe transfer cost. |
+| **Sequence parallelism** (Ulysses + Ring USP) | [`xfuser` / xDiT](https://github.com/xdit-project/xDiT) — external (DeepSpeed-Ulysses lineage) | Shard the long sequence (long video → many tokens) across GPUs along the sequence dim. |
+| **Tensor parallelism** | standard | Shard linear-layer weights across GPUs. |
 
 The pattern: SGLang-Diffusion's *original code* is the runtime that schedules these kernels and applies offload / parallelism plans. Each named library can be A/B-tested by toggling its flag.
 
