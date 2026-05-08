@@ -324,14 +324,14 @@ Every technique in this lab is for inference. The training-relevant subset:
 - **Not a training framework**. For training, lab 4.3 (LoRA) and 4.5 (full SFT) use `accelerate` + `bitsandbytes` + `peft` directly. Some kernels overlap; the orchestration is different.
 - **Not the only option** — see the comparison below.
 
-### Other inference frameworks worth knowing
+### Comparison of inference frameworks
 
 | Framework | Shape | Best for |
 |---|---|---|
+| **SGLang-Diffusion** (this lab) | full engine: kernel composition + multi-backend attn + Cache-DiT + USP | most thorough open-source production engine; deepest single-GPU and multi-GPU |
 | **diffusers** + `torch.compile` | reference + JIT compiler | hackable baseline; ~1.5–1.8× over plain diffusers |
 | **[OneDiff](https://github.com/siliconflow/onediff)** | graph compiler, drop-in for diffusers | one-line speedup without rewriting kernels |
 | **[xDiT / xfuser](https://github.com/xdit-project/xDiT)** | parallelism library | SP/TP wrappers you layer onto stock diffusers |
-| **SGLang-Diffusion** (this lab) | full engine: kernel composition + multi-backend attn + Cache-DiT + USP | most thorough open-source production engine; deepest single-GPU and multi-GPU |
 | **[TensorRT-LLM-Diffusion](https://github.com/NVIDIA/TensorRT-LLM)** | AOT graph compiler, NVIDIA-blessed | single-tenant H100/B200 deployments |
 | **[vLLM-Diffusion](https://github.com/vllm-project/vllm)** | continuous-batching engine (LLM heritage) | batch-serving; less mature for video DiT as of mid-2026 |
 
