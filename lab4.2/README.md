@@ -6,12 +6,17 @@ This lab is **inference-only**. Every technique below targets generation latency
 
 ## Acceleration over lab 4.1
 
-Lab 4.1 used `WanPipeline.from_pretrained(...).__call__(...)` directly. That's the readable, hackable, ~30-second-load reference path. It's also slow:
+Lab 4.1 used `WanPipeline.from_pretrained(...).__call__(...)` directly. That's the readable, hackable, ~30-second-load reference path — and on a recent CUDA + PyTorch build it already gets you a fair amount for free:
 
-- Every `Linear → activation → Linear` runs as separate CUDA kernels — kernel-launch overhead dominates at small token counts.
-- Attention runs on whatever PyTorch picks (`scaled_dot_product_attention` → cuDNN or FlashAttention 2 if compiled-in). No SageAttention, no quantized attention, no diffusion-specific kernels.
-- No caching of redundant DiT computation across diffusion steps.
-- Single-GPU only — no sequence or tensor parallelism.
+- **FlashAttention 2** via PyTorch's `F.scaled_dot_product_attention` dispatch — no extra setup needed.
+- **bf16** weights and activations.
+
+What it *doesn't* get you, and what lab 4.2's deeper engines add:
+
+- Every `Linear → activation → Linear` runs as separate CUDA kernel launches — fusion (`fused_qkv`, `gate+up+SiLU`, JIT'd QK-norm, custom timestep kernel) collapses dozens of launches into one.
+- Only the SDPA/FlashAttention-2 backend is reachable; no SageAttention, no FlashAttention 3, no FlashInfer RoPE — all of which SGLang-Diffusion swaps in by flag.
+- No caching of redundant DiT computation across diffusion steps (Cache-DiT contributes ~1.7× by itself).
+- Single-GPU only — no USP / Ring / Ulysses sequence parallelism, no layerwise weight offload.
 
 A production inference engine fixes all of those. SGLang-Diffusion is the canonical open-source one (sister project to SGLang for LLMs). The blog post claims up to 5× speedup over baseline; the techniques below are why.
 
