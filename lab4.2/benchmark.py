@@ -169,14 +169,14 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
             num_frames=args.num_frames,
             num_inference_steps=2,                  # just enough to compile
             guidance_scale=args.guidance,
-            generator=torch.Generator("cuda").manual_seed(0),
+            generator=torch.Generator("cpu").manual_seed(0),
         )
         warmup_secs = time.time() - tw
         print(f"  warmup:   {fmt_secs(warmup_secs)}")
 
     torch.cuda.reset_peak_memory_stats()
     t1 = time.time()
-    generator = torch.Generator("cuda").manual_seed(args.seed)
+    generator = torch.Generator("cpu").manual_seed(args.seed)
     output = pipe(
         prompt_embeds=prompt_embeds,
         negative_prompt_embeds=neg_embeds,
