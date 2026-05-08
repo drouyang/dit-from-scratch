@@ -160,6 +160,8 @@ pipe.transformer = torch.compile(pipe.transformer, mode="default")
 
 That's it. The first inference call triggers compilation (~30–60 s warmup); subsequent calls are fast.
 
+> **Why `mode="default"` and not `mode="reduce-overhead"` on a single 4090.** `reduce-overhead` is theoretically the faster mode for diffusion sampling (it adds CUDA graph capture on top of Inductor fusion). It does **not** work on a single GPU running `WanPipeline` because the pipeline calls the transformer **twice per step** (conditional + unconditional, for CFG), and the second call's CUDA Graph replay aliases over the first call's output buffer while it's still being read for the `v_uncond + s · (v_cond − v_uncond)` extrapolation. You see `RuntimeError: accessing tensor output of CUDAGraphs that has been overwritten`. Workarounds — wrap the transformer to clone its output, run the two CFG branches on separate GPUs (CFG parallel, ~1.8× over single-GPU default), or wait for diffusers to ship `cudagraph_mark_step_begin()` between calls — are detailed in Pitfalls below. **For a single-4090 baseline, `mode="default"` is the realistic ceiling.**
+
 What `mode` does:
 
 - **`default`** — TorchDynamo + AOTAutograd + Inductor. Constant folding, dead-code elimination, kernel fusion via Triton. **What this lab uses.**
