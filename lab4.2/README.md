@@ -65,6 +65,7 @@ sglang generate --help    # should print the CLI flags listed in the toggle map
 Generate the same 3-second clip via three backends — stock diffusers, diffusers + `torch.compile`, and SGLang-Diffusion:
 
 ```bash
+cd lab4.2
 python benchmark.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 ```
 
