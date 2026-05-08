@@ -77,6 +77,7 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> tuple[float, int,
 
     vae = AutoencoderKLWan.from_pretrained(WAN_REPO, subfolder="vae", torch_dtype=torch.float32)
     pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda")
+    pipe.vae.enable_tiling()  # avoid VAE-decode OOM at 832x480 × 49 frames on a 24 GB 4090
     print(f"  load:     {fmt_secs(time.time() - t0)}")
 
     if compile_mode is not None:
