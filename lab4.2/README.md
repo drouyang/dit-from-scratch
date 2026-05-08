@@ -89,25 +89,38 @@ shape:  49 frames @ 832×480,  steps=30,  cfg=5.0,  seed=42
   peak VRAM:  11.42 GB
   saved out_diffusers_compile_default.mp4
 
+=== diffusers + torch.compile + CFG parallel (2 GPUs) ===
+  load:        47.5s
+  warming up torch.compile (~30-60s × 2 GPUs in parallel)...
+  warmup:      52.1s
+  generate:    78.4s (steady-state, post-warmup)
+  peak VRAM:   9.65 GB  (max across both GPUs)
+  saved out_cfg_parallel.mp4
+
 === sglang ===
   $ sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers ...
   wall:       82.1s  (includes load + generate, can't separate)
   saved out_sglang.mp4
 
 === comparison ===
-backend                          wall     peak VRAM
-----------------------------------------------------
-diffusers                       220.4s     10.78 GB
-diffusers + torch.compile       132.8s     11.42 GB
-sglang-diffusion                 82.1s    (see sglang logs)
+backend                                  wall     peak VRAM
+----------------------------------------------------------
+diffusers                               220.4s     10.78 GB
+diffusers + torch.compile               132.8s     11.42 GB
+diffusers + compile + CFG parallel       78.4s      9.65 GB
+sglang-diffusion                         82.1s    (see sglang logs)
 
-torch.compile speedup: 1.66×  (vs diffusers baseline)
-sglang        speedup: 2.69×  (vs diffusers baseline)
+torch.compile speedup:        1.66×  (vs diffusers baseline)
+compile + CFG parallel:       2.81×  (vs diffusers baseline)
+sglang:                       2.69×  (vs diffusers baseline)
 ```
 
-Numbers vary by GPU, drivers, and SGLang version. The shape — `torch.compile` alone gets ~1.5×, SGLang adds another ~1.6× by composing kernels and caching that `torch.compile` can't reach — is what you're verifying.
+Numbers vary by GPU, drivers, and SGLang version. The shape:
+- `torch.compile` alone gets ~1.5–1.7× (Inductor kernel fusion).
+- `torch.compile + CFG parallel` gets ~2.5–2.9× (kernel fusion *and* the two CFG forwards run concurrently on separate GPUs — exactly the speedup `mode="reduce-overhead"` would have given on a single GPU if it didn't break with WAN's CFG aliasing). Auto-skipped on single-GPU machines.
+- `sglang-diffusion` gets ~2.5–3× even on a single GPU by composing kernels (FlashInfer RoPE, fused QKV/QK-norm/SwiGLU) and Cache-DiT that `torch.compile` can't reach.
 
-`--skip-compile` skips the `torch.compile` run (saves ~1–2 min). `--skip-sglang` skips the SGLang run.
+Skip flags: `--skip-compile`, `--skip-cfg-parallel`, `--skip-sglang`.
 
 ## Toggle map (the SGLang-Diffusion flags)
 
