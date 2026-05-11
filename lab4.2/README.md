@@ -44,27 +44,47 @@ The pattern: SGLang-Diffusion's *original code* is the runtime that schedules th
 
 ## Setup
 
-From the repo root with the shared venv activated:
+This lab adds **one new venv** beyond the shared root `.venv` every other lab uses: an **isolated sglang venv** at `lab4.2/.venv-sglang/`. The reason: SGLang ships compiled CUDA kernels (`flashinfer-cubin`, `sgl-kernel`) pinned to a specific torch ABI. Installing it into the same venv as your diffusers stack can replace torch/cuDNN under you and break the diffusers path you spent labs 1.x–4.1 setting up. Keep sglang in its own venv; everything else (including the diffusers half of this lab's benchmark) uses the shared root `.venv`.
 
-```bash
-pip install -r lab4.2/requirements.txt
-
-# SGLang-Diffusion is installed separately because it requires uv + prerelease pins:
-pip install --upgrade uv
-uv pip install "sglang[diffusion]" --prerelease=allow
+```
+dit-from-scratch/
+├── .venv/                 ← shared root venv (labs 1.x–4.5 diffusers)
+└── lab4.2/
+    └── .venv-sglang/      ← only sglang lives here
 ```
 
-Verify SGLang is on PATH:
+From the repo root, with the shared `.venv` already set up per the parent README:
 
 ```bash
-sglang generate --help    # should print the CLI flags listed in the toggle map
+# Add this lab's diffusers deps into the shared root venv:
+source .venv/bin/activate
+pip install -r lab4.2/requirements.txt
+deactivate
+
+# Create the isolated sglang venv. uv is recommended (the install needs
+# --prerelease=allow, which pip doesn't support as a flag):
+cd lab4.2
+python3 -m venv .venv-sglang
+source .venv-sglang/bin/activate
+pip install --upgrade pip uv
+uv pip install "sglang[diffusion]" --prerelease=allow
+deactivate
+cd ..
+```
+
+The benchmark activates the shared root `.venv`, then invokes SGLang via subprocess against `lab4.2/.venv-sglang/bin/sglang` — it never imports SGLang into the diffusers venv. Verify both:
+
+```bash
+.venv/bin/python -c "import diffusers, torch; print('diffusers OK')"
+lab4.2/.venv-sglang/bin/sglang generate --help   # should print the SGLang CLI flags
 ```
 
 ## Run the benchmark
 
-Generate the same 3-second clip via three backends — stock diffusers, diffusers + `torch.compile`, and SGLang-Diffusion:
+Generate the same 3-second clip via three backends — stock diffusers, diffusers + `torch.compile`, and SGLang-Diffusion. Run from `lab4.2/` with the shared root venv activated (the script subprocess-invokes the sglang venv's `sglang` binary itself):
 
 ```bash
+source .venv/bin/activate    # from the repo root
 cd lab4.2
 python benchmark.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 ```

@@ -105,6 +105,21 @@ def fmt_mem(bytes_: int) -> str:
     return f"{bytes_ / 1e9:5.2f} GB"
 
 
+def _find_sglang_bin() -> str | None:
+    """Locate the sglang executable.
+
+    Prefers the dedicated sglang venv at `lab4.2/.venv-sglang/bin/sglang`
+    so this script (running from lab4.2/.venv) doesn't need sglang
+    imported into its own interpreter. Falls back to whatever's on PATH.
+    """
+    # benchmark.py lives at lab4.2/benchmark.py, so the sglang venv is a sibling.
+    lab_dir = Path(__file__).resolve().parent
+    candidate = lab_dir / ".venv-sglang" / "bin" / "sglang"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return shutil.which("sglang")
+
+
 # ---------- diffusers baseline ------------------------------------------------
 
 def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
@@ -231,15 +246,25 @@ def run_sglang(args, *, cfg_parallel: bool = False) -> RunResult:
     if cfg_parallel and torch.cuda.device_count() < 2:
         print(f"\n=== {label} ===  (skipped — need ≥2 GPUs)")
         return RunResult(name=label, skipped=True, note="need ≥2 GPUs")
-    if shutil.which("sglang") is None:
-        print(f"\n=== {label} ===  (skipped — `sglang` not in PATH)")
-        print("  install with:  uv pip install \"sglang[diffusion]\" --prerelease=allow")
-        return RunResult(name=label, skipped=True, note="sglang not in PATH")
+
+    # Prefer the dedicated sglang venv (lab4.2/.venv-sglang/bin/sglang) so
+    # the diffusers half of the benchmark and the sglang half can each keep
+    # their own torch + cuDNN. Fall back to PATH for users who installed
+    # sglang globally or into the same venv.
+    sglang_bin = _find_sglang_bin()
+    if sglang_bin is None:
+        print(f"\n=== {label} ===  (skipped — sglang not found)")
+        print("  set up the sglang venv (from lab4.2/):")
+        print("    python3 -m venv .venv-sglang")
+        print("    source .venv-sglang/bin/activate")
+        print("    pip install --upgrade pip uv")
+        print("    uv pip install \"sglang[diffusion]\" --prerelease=allow")
+        return RunResult(name=label, skipped=True, note="sglang not found")
 
     print(f"\n=== {label} ===")
     out_path = "out_sglang_cfgp.mp4" if cfg_parallel else "out_sglang.mp4"
     cmd = [
-        "sglang", "generate",
+        sglang_bin, "generate",
         "--model-path", WAN_REPO,
         "--prompt", args.prompt,
         "--height", str(args.height),
@@ -248,7 +273,7 @@ def run_sglang(args, *, cfg_parallel: bool = False) -> RunResult:
         "--num-inference-steps", str(args.steps),
         "--guidance-scale", str(args.guidance),
         "--seed", str(args.seed),
-        "--save-output", out_path,
+        "--output-file-path", out_path,
     ]
     if cfg_parallel:
         cmd.append("--enable-cfg-parallel")
