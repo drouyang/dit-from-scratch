@@ -69,6 +69,13 @@ python benchmark.py --compile default
 python benchmark.py --compile max-autotune
 ```
 
+Key API (`benchmark.py:160`) — the CLI flag flows straight into `torch.compile`'s `mode=` kwarg:
+
+```python
+pipe.transformer = torch.compile(pipe.transformer, mode=args.compile)
+# args.compile ∈ {"default", "max-autotune", "reduce-overhead"}
+```
+
 What you're measuring: how much Inductor + Triton fusion + (optional) autotune accelerates the *transformer* forward, and how much warmup costs you for that win.
 
 Expected, single 4090:
@@ -99,6 +106,18 @@ python benchmark.py --compile default         # JIT: first call pays compile
 python benchmark.py --aot load                # AOT: first call skips compile
 ```
 
+Key APIs — export (write `.pt2`), then load (skip JIT on next process start):
+
+```python
+# benchmark.py:223 — --aot save: trace + package
+exported = torch.export.export(pipe.transformer, args=example_inputs)
+torch._inductor.aoti_compile_and_package(exported, package_path=args.aot_path)
+
+# benchmark.py:268 — --aot load: deserialize into the transformer slot
+loaded = torch._inductor.aoti_load_package(args.aot_path)
+pipe.transformer = _AOTWrapper(loaded, pipe.transformer)  # mimics transformer.__call__
+```
+
 What you're measuring: AOT's value is in the **first-call** column, not the second. After warmup both paths converge to the same steady state.
 
 Expected, single 4090:
@@ -121,6 +140,20 @@ python benchmark.py --sdpa-backend efficient  # xFormers-style memory-efficient
 python benchmark.py --sdpa-backend cudnn      # cuDNN's fused attention
 ```
 
+Key API (`benchmark.py:94–102`) — the CLI flag selects an `SDPBackend` and wraps the `pipe(...)` call in a `sdpa_kernel(...)` context manager that restricts dispatch:
+
+```python
+from torch.nn.attention import SDPBackend, sdpa_kernel
+backend = {
+    "flash":     SDPBackend.FLASH_ATTENTION,
+    "efficient": SDPBackend.EFFICIENT_ATTENTION,
+    "cudnn":     SDPBackend.CUDNN_ATTENTION,
+    "math":      SDPBackend.MATH,
+}[args.sdpa_backend]
+with sdpa_kernel(backend):
+    output = pipe(...)
+```
+
 What you're measuring: which attention kernel PyTorch's SDPA dispatcher is *actually* picking, and whether forcing a specific one wins. Stock PyTorch on Ampere+ already auto-dispatches to `flash` — this experiment is mostly *verifying* the default and seeing the small spread between alternatives.
 
 Expected, single 4090:
@@ -139,6 +172,15 @@ Differences are usually within ±5%. The interesting check is that *all backends
 ```bash
 python benchmark.py --offload model           # whole-component CPU offload
 python benchmark.py --offload sequential      # per-submodule CPU offload
+```
+
+Key API (`benchmark.py:153–156`) — diffusers ships two offload helpers; the CLI flag picks one:
+
+```python
+if args.offload == "model":
+    pipe.enable_model_cpu_offload()       # cycle whole modules (text encoder, transformer, VAE)
+elif args.offload == "sequential":
+    pipe.enable_sequential_cpu_offload()  # cycle individual submodules within each model
 ```
 
 What you're measuring: how much **peak VRAM** drops when diffusers' offload helpers move idle components to CPU, and how much wall clock you pay for that drop.
