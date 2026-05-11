@@ -67,17 +67,33 @@ One row, no optimizations. The reference point every experiment compares against
 ```bash
 # Prefix with TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) so each invocation gets a
 # fresh Inductor cache — otherwise re-runs hit the disk cache and the "first
-# call" number drops from ~114 s (cold compile) to ~70 s (warm cache).
+# call" number drops from ~119 s (cold compile) to ~70 s (warm cache).
 TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) python benchmark.py --compile default
-TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) python benchmark.py --compile max-autotune
+TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) python benchmark.py --compile max-autotune-no-cudagraphs
 ```
 
 Key API (`benchmark.py:160`) — the CLI flag flows straight into `torch.compile`'s `mode=` kwarg:
 
 ```python
 pipe.transformer = torch.compile(pipe.transformer, mode=args.compile)
-# args.compile ∈ {"default", "max-autotune", "reduce-overhead"}
 ```
+
+**PyTorch ships four named modes.** They compose three orthogonal levers (Inductor fusion, CUDA Graph capture, Triton autotune):
+
+| Mode | Inductor fusion | CUDA Graphs | Autotune | Works on WAN? |
+|---|---|---|---|---|
+| `default` | ✓ | — | — | ✓ |
+| `reduce-overhead` | ✓ | ✓ | — | ✗ (CFG aliasing) |
+| `max-autotune` | ✓ | ✓ | ✓ | ✗ (CFG aliasing) |
+| `max-autotune-no-cudagraphs` | ✓ | — | ✓ | ✓ |
+
+**Why `reduce-overhead` and `max-autotune` both fail on WAN.** Both modes enable **CUDA Graph capture**, which records a stream of kernel launches once and replays it with near-zero CPU overhead. That replay reuses the same output buffer across calls. WAN's pipeline calls the transformer **twice per step** (conditional + unconditional, for CFG), then computes `v_uncond + s · (v_cond − v_uncond)` — but by the time the extrapolation reads the *first* call's output, the *second* call's replay has already overwritten it. You get:
+
+```
+RuntimeError: accessing tensor output of CUDAGraphs that has been overwritten
+```
+
+So this experiment uses `max-autotune-no-cudagraphs` instead of `max-autotune`: same Triton autotune win (~5–10% extra steady-state speedup), no CUDA Graph aliasing. `default` works for the same reason — no CUDA Graphs in the first place. See the deep-dive pitfall section below for workarounds (clone, `cudagraph_mark_step_begin`, CFG-parallel).
 
 What you're measuring: how much Inductor + Triton fusion + autotune (optional) accelerates the *transformer* forward, and how much warmup costs you for that win.
 
@@ -87,7 +103,7 @@ Expected, single 4090:
 |---|---|---|---|---|---|
 | baseline | **5.8 s** | **77 s** | **77 s** | 1× | **20.5 GB** |
 | `--compile default` | **6.3 s** | **119 s** | **62 s** | **1.24×** | **20.5 GB** |
-| `--compile max-autotune` | TBD | TBD | TBD | TBD | TBD |
+| `--compile max-autotune-no-cudagraphs` | TBD | TBD | TBD | TBD | TBD |
 
 Second-call latency is the production-relevant number (steady-state). First-call latency is what you'd pay every cold start without AOT.
 
@@ -105,6 +121,49 @@ You pay the compile tax once per process. After that, every call is faster. This
 
 1. **WAN's transformer is small (1.3B params).** Kernel-launch overhead is already a smaller fraction of total time, so Inductor's fusion has less to save. Bigger transformers (SD3 2B, FLUX 12B) typically see bigger compile wins.
 2. **bf16 + FlashAttention via SDPA is already very efficient.** PyTorch's SDPA dispatcher routes attention to FlashAttention 2 automatically on Ampere+; the matmuls run in bf16 on Tensor Cores. The dominant ops are already well-tuned kernels, so Inductor's fusion is mostly cleaning up the small ops *around* them (norms, residual adds, gates) — not the hot path itself.
+
+### Deep dive: `torch.compile` (JIT)
+
+```python
+pipe = WanPipeline.from_pretrained(...).to("cuda")
+pipe.transformer = torch.compile(pipe.transformer, mode="default")
+```
+
+That's it. The first inference call triggers compilation (~30–60 s warmup); subsequent calls reuse the compiled graph and run fast.
+
+#### What `mode` does
+
+PyTorch's compile modes compose three orthogonal levers — Inductor fusion (always on), CUDA Graph capture, and Triton autotune:
+
+| Mode | Inductor fusion | CUDA Graphs | Autotune | When to use |
+|---|---|---|---|---|
+| **`default`** | ✓ | — | — | **Default choice.** Reliable on any pipeline, ~1.5–1.7× speedup on big DiTs, ~30–60 s warmup. |
+| **`reduce-overhead`** | ✓ | ✓ | — | *Theoretically* best for diffusion sampling loops, but **broken with WAN-style CFG** (see pitfall below). |
+| **`max-autotune`** | ✓ | ✓ | ✓ | Production builds where you can afford ~5–10 min warmup for ~5–10% extra steady-state. **Also broken with WAN-style CFG** — uses CUDA Graphs. |
+| **`max-autotune-no-cudagraphs`** | ✓ | — | ✓ | Same autotune win as `max-autotune` without CUDA Graphs. **The mode to use for WAN.** |
+
+#### Pitfall: CUDA Graphs and CFG-batched pipelines
+
+Two modes — `reduce-overhead` and `max-autotune` — enable CUDA Graph capture. CUDA Graphs would be the right primitive for diffusion sampling (same model, called N times). They do **not** work on `WanPipeline` as shipped because the pipeline calls the transformer **twice per step** (conditional + unconditional, for CFG), and the second call's CUDA Graph replay overwrites the first call's output buffer while it's still being read for the `v_uncond + s · (v_cond − v_uncond)` extrapolation. You see:
+
+```
+RuntimeError: accessing tensor output of CUDAGraphs that has been overwritten
+```
+
+Four ways out:
+
+1. **Use `max-autotune-no-cudagraphs`.** Drops the CUDA Graph capture, keeps the Triton autotune. **The cleanest workaround on single-GPU**, and what Experiment 1 uses.
+2. **Wrap the transformer's output in a `.clone()`** — adds one buffer copy per call, eliminates the aliasing. Enables `reduce-overhead`/`max-autotune`; ~1.1× slower than ideal but still usually a net win.
+3. **Call `torch.compiler.cudagraph_mark_step_begin()` between cond and uncond forwards** — tells the CUDA Graph that the next call is a separate step, so it allocates fresh output buffers. Needs patching diffusers' pipeline (~5 lines).
+4. **Run cond + uncond on separate GPUs (CFG parallel)** — each transformer copy sees only one forward per step → no aliasing. Faster than either of the above, but requires ≥2 GPUs. Covered in lab 4.3 with SGLang's `--enable-cfg-parallel` flag.
+
+For a single-GPU diffusers run with no diffusers patching, **`max-autotune-no-cudagraphs` is the ceiling** — same Inductor + Triton-autotune work that `max-autotune` does, minus the CUDA Graphs that would break WAN-CFG.
+
+#### Other pitfalls
+
+- **Dynamic shapes recompile.** Vary `num_frames` or `height` / `width` between calls and you trigger a recompile (visible as a 30+ s stall on the next call). Either fix the shape, or accept the recompile cost.
+- **First call is slow.** Always exclude warmup from your benchmarks; `benchmark.py` does this for you.
+- **VAE rarely worth compiling.** Most compute is in the transformer; compiling the VAE adds compile-time cost without proportional speedup.
 
 ### Experiment 2 — AOT cold-start vs JIT
 
@@ -209,45 +268,6 @@ Expected, single 4090:
 **Why `--offload model` is essentially free here** (+1% latency vs the ~10–15% you'd expect). The benchmark already does its own manual text-encoder offload (`pipe.text_encoder.to("cpu")` after `encode_prompt`) to avoid an OOM during torch.compile. That's the *expensive* offload — umT5-XXL is ~11 GB. By the time `--offload model` engages, the only remaining cycle work is the transformer ↔ VAE handoff, which is tiny (~3 GB savings, sub-second wall cost). So our measured "+1% slowdown / −17% VRAM" reflects baseline-minus-text-encoder-offload, not raw `enable_model_cpu_offload()`. The trade-off shape still holds — just shifted: each *additional* level of offload costs roughly an order of magnitude more in latency for the next chunk of VRAM. The `--offload sequential` row (per-submodule offload) is where the steep slowdown kicks in.
 
 On a 4090 you don't need offload to fit (baseline is 20.5 GB on a 24 GB card), but the experiment is how you'd plan a deployment to a 12 GB card, or run two models concurrently on the same GPU.
-
-## Deep dive: `torch.compile` (JIT)
-
-```python
-pipe = WanPipeline.from_pretrained(...).to("cuda")
-pipe.transformer = torch.compile(pipe.transformer, mode="default")
-```
-
-That's it. The first inference call triggers compilation (~30–60 s warmup); subsequent calls reuse the compiled graph and run fast.
-
-### What `mode` does
-
-| Mode | What it adds | When to use |
-|---|---|---|
-| **`default`** | TorchDynamo + AOTAutograd + Inductor. Constant folding, dead-code elimination, kernel fusion via Triton. | **Default choice.** Reliable, ~1.5–1.7× speedup, ~30–60 s warmup. |
-| **`reduce-overhead`** | Adds CUDA Graph capture on top of `default`. Eliminates per-step Python and kernel-launch overhead. | *Theoretically* best for diffusion sampling loops, but **broken with WAN-style CFG**. See pitfall below. |
-| **`max-autotune`** | Autotunes Triton kernels at compile time. No CUDA Graphs. | Production builds. ~5–10 minutes warmup for ~5–10% extra steady-state speedup over `default`. |
-
-### Pitfall: `reduce-overhead` and CFG-batched pipelines
-
-`reduce-overhead` would be the right mode for diffusion sampling — same model, called N times, perfect for CUDA Graphs. It does **not** work on `WanPipeline` as shipped because the pipeline calls the transformer **twice per step** (conditional + unconditional, for CFG), and the second call's CUDA Graph replay overwrites the first call's output buffer while it's still being read for the `v_uncond + s · (v_cond − v_uncond)` extrapolation. You see:
-
-```
-RuntimeError: accessing tensor output of CUDAGraphs that has been overwritten
-```
-
-Three known workarounds, none yet shipped in stock diffusers as of writing:
-
-1. **Wrap the transformer's output in a `.clone()`** — adds one buffer copy per call, eliminates the aliasing. ~1.1× slower than ideal but enables `reduce-overhead` to work; usually still a net win vs `default`.
-2. **Call `torch.compiler.cudagraph_mark_step_begin()` between cond and uncond forwards** — tells the CUDA Graph that the next call is a separate step, so it allocates fresh output buffers. Needs patching diffusers' pipeline (~5 lines).
-3. **Run cond + uncond on separate GPUs (CFG parallel)** — each transformer copy sees only one forward per step → no aliasing. Faster than either of the above, but requires ≥2 GPUs. Covered in lab 4.3 with SGLang's `--enable-cfg-parallel` flag.
-
-For a single-GPU diffusers run, **`mode="default"` is the realistic ceiling** until diffusers ships one of the workarounds.
-
-### Other pitfalls
-
-- **Dynamic shapes recompile.** Vary `num_frames` or `height` / `width` between calls and you trigger a recompile (visible as a 30+ s stall on the next call). Either fix the shape, or accept the recompile cost.
-- **First call is slow.** Always exclude warmup from your benchmarks; `benchmark.py` does this for you.
-- **VAE rarely worth compiling.** Most compute is in the transformer; compiling the VAE adds compile-time cost without proportional speedup.
 
 ## Deep dive: AOT compilation (`torch.export` + AOTInductor)
 
