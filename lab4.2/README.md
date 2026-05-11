@@ -65,8 +65,11 @@ One row, no optimizations. The reference point every experiment compares against
 ### Experiment 1 — `torch.compile` modes
 
 ```bash
-python benchmark.py --compile default
-python benchmark.py --compile max-autotune
+# Prefix with TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) so each invocation gets a
+# fresh Inductor cache — otherwise re-runs hit the disk cache and the "first
+# call" number drops from ~114 s (cold compile) to ~70 s (warm cache).
+TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) python benchmark.py --compile default
+TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) python benchmark.py --compile max-autotune
 ```
 
 Key API (`benchmark.py:160`) — the CLI flag flows straight into `torch.compile`'s `mode=` kwarg:
@@ -98,6 +101,12 @@ baseline first call:           uncompiled_gen                  ≈ 77 s
 
 You pay the compile tax once per process. After that, every call is faster. This is exactly why AOT (Experiment 2) matters for cold-start-sensitive deploys: the compile work moves *before* the process starts (`--aot save` once, ahead of time), so the next process's first call skips it entirely.
 
+> **Inductor caches kernels on disk** at `/tmp/torchinductor_$USER/` (and `~/.triton/cache/`). The 114 s number above is a **cold** first call. Re-run `python benchmark.py --compile default` a second time and the first call drops to ~70 s — Inductor hits the disk cache and skips most of the kernel compile (only Dynamo trace + cache lookup remain, ~8 s). To force a clean cold-compile measurement:
+> ```bash
+> TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) python benchmark.py --compile default
+> ```
+> This sends Inductor to a fresh temp dir for that one run; the OS cleans `/tmp` on reboot. In production this caching is a *feature* — every restart after the first sees ~70 s, not ~114 s — but it muddies cold-vs-warm benchmarks if you don't control for it.
+
 **Why 1.24× is on the low end** (typical for DiTs is 1.5–1.7×). Two plausible reasons:
 
 1. **WAN's transformer is small (1.3B params).** Kernel-launch overhead is already a smaller fraction of total time, so Inductor's fusion has less to save. Bigger transformers (SD3 2B, FLUX 12B) typically see bigger compile wins.
@@ -111,9 +120,11 @@ You pay the compile tax once per process. After that, every call is faster. This
 # One-time export (slow — warms compile, then packages):
 python benchmark.py --aot save                # writes wan_transformer.pt2
 
-# Now A/B the cold-start path against JIT compile:
-python benchmark.py --compile default         # JIT: first call pays compile
-python benchmark.py --aot load                # AOT: first call skips compile
+# Now A/B the cold-start path against JIT compile. Use a fresh Inductor
+# cache for the JIT row so its first-call number reflects true cold
+# compile, not a warm-cache replay:
+TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) python benchmark.py --compile default   # JIT: first call pays full compile
+python benchmark.py --aot load                # AOT: first call skips compile entirely
 ```
 
 Key APIs — export (write `.pt2`), then load (skip JIT on next process start):
