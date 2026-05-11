@@ -76,14 +76,14 @@ pipe.transformer = torch.compile(pipe.transformer, mode=args.compile)
 # args.compile ∈ {"default", "max-autotune", "reduce-overhead"}
 ```
 
-What you're measuring: how much Inductor + Triton fusion + (optional) autotune accelerates the *transformer* forward, and how much warmup costs you for that win.
+What you're measuring: how much Inductor + Triton fusion + autotune (optional) accelerates the *transformer* forward, and how much warmup costs you for that win.
 
 Expected, single 4090:
 
 | config | model load | first call | second call | speedup (second) |
 |---|---|---|---|---|
 | baseline | **5.8 s** | **77 s** | **77 s** | 1× |
-| `--compile default` | **6.3 s** | **114 s** (incl. ~52 s JIT compile) | **62 s** | **1.24×** |
+| `--compile default` | **6.3 s** | **114 s** | **62 s** | **1.24×** |
 | `--compile max-autotune` | TBD | TBD (incl. Triton autotune) | TBD | TBD |
 
 Second-call latency is the production-relevant number (steady-state). First-call latency is what you'd pay every cold start without AOT.
