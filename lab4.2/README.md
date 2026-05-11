@@ -76,10 +76,17 @@ Expected, single 4090:
 | config | first call | second call | speedup (second) |
 |---|---|---|---|
 | baseline | **77 s** (measured) | **77 s** (measured) | 1× |
-| `--compile default` | TBD (incl. JIT-compile warmup) | TBD | TBD |
+| `--compile default` | **114 s** (measured; incl. ~52 s JIT compile) | **62 s** (measured) | **1.24×** |
 | `--compile max-autotune` | TBD (incl. Triton autotune) | TBD | TBD |
 
 Second-call latency is the production-relevant number (steady-state). First-call latency is what you'd pay every cold start without AOT.
+
+**Why 1.24× is on the low end** (typical for DiTs is 1.5–1.7×). Two plausible reasons:
+
+1. **WAN's transformer is small (1.3B params).** Kernel-launch overhead is already a smaller fraction of total time, so Inductor's fusion has less to save. Bigger transformers (SD3 2B, FLUX 12B) typically see bigger compile wins.
+2. **bf16 + FlashAttention via SDPA is already very efficient.** PyTorch's SDPA dispatcher routes attention to FlashAttention 2 automatically on Ampere+; the matmuls run in bf16 on Tensor Cores. The dominant ops are already well-tuned kernels, so Inductor's fusion is mostly cleaning up the small ops *around* them (norms, residual adds, gates) — not the hot path itself.
+
+`--compile max-autotune` will tell us whether there's more headroom (it autotunes Triton kernels) or whether 1.24× is the real ceiling for this model on this GPU. The SDPA-backend experiment is a sanity check that we're already on the fastest attention path.
 
 ### Experiment 2 — AOT cold-start vs JIT
 
@@ -99,7 +106,7 @@ Expected, single 4090:
 | config | model load | first call | second call |
 |---|---|---|---|
 | baseline | **5.8 s** (measured) | **77 s** (measured) | **77 s** (measured) |
-| `--compile default` (JIT) | TBD | TBD (incl. JIT compile) | TBD |
+| `--compile default` (JIT) | **6.3 s** (measured) | **114 s** (measured; ~52 s compile + ~62 s gen) | **62 s** (measured) |
 | `--aot load` | TBD (just `.pt2` load) | TBD | TBD |
 
 `--aot load` should save the JIT-compile portion of cold start *and* skip part of `from_pretrained` (transformer loads from `.pt2` instead). For serverless / autoscaling deploys where every container restart re-pays cold-start cost, this is the big win.
