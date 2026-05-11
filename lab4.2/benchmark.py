@@ -4,7 +4,7 @@ Four orthogonal optimization knobs (`--compile`, `--aot`, `--sdpa-backend`,
 `--offload`), each tunable independently. Pass `--help` for the full surface.
 The README composes invocations into four named experiments:
 
-  Exp 1  torch.compile modes        --compile {default,max-autotune}
+  Exp 1  torch.compile modes        --compile {default,max-autotune-no-cudagraphs}
   Exp 2  AOT cold-start vs JIT      --aot save / --aot load
   Exp 3  SDPA backend selection     --sdpa-backend {flash,efficient,cudnn,math}
   Exp 4  Offload trade-off          --offload {model,sequential}
@@ -394,8 +394,15 @@ def main():
     p.add_argument("--seed",       type=int,   default=42)
 
     # Four orthogonal optimization knobs.
-    p.add_argument("--compile", choices=["none", "default", "max-autotune"], default="none",
-                   help="torch.compile mode for the transformer")
+    p.add_argument("--compile",
+                   choices=["none", "default", "reduce-overhead",
+                            "max-autotune", "max-autotune-no-cudagraphs"],
+                   default="none",
+                   help="torch.compile mode for the transformer. "
+                        "Note: reduce-overhead and max-autotune enable CUDA "
+                        "Graphs, which alias buffers across WanPipeline's "
+                        "two-pass CFG and raise RuntimeError. Use "
+                        "max-autotune-no-cudagraphs for the autotune win.")
     p.add_argument("--aot", choices=["none", "save", "load"], default="none",
                    help="AOT export (save) or load a previously-exported .pt2")
     p.add_argument("--aot-path", default="wan_transformer.pt2",
