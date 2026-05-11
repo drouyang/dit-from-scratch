@@ -88,6 +88,16 @@ Expected, single 4090:
 
 Second-call latency is the production-relevant number (steady-state). First-call latency is what you'd pay every cold start without AOT.
 
+**Why `--compile default`'s first call (114 s) is *slower* than the baseline first call (77 s).** Compile work happens *during* the first forward, not at `torch.compile(...)` time. Dynamo traces the graph, AOTAutograd captures it, Inductor lowers to Triton, and Triton emits CUDA kernels — roughly ~52 s of that for WAN's transformer. Only *after* all that does the compiled forward actually run (in ~62 s, matching second-call). So:
+
+```
+baseline first call:           uncompiled_gen                  ≈ 77 s
+--compile default first call:  compile_overhead + compiled_gen ≈ 52 + 62 = 114 s
+--compile default second call: compiled_gen                    ≈ 62 s   ← the win
+```
+
+You pay the compile tax once per process. After that, every call is faster. This is exactly why AOT (Experiment 2) matters for cold-start-sensitive deploys: the compile work moves *before* the process starts (`--aot save` once, ahead of time), so the next process's first call skips it entirely.
+
 **Why 1.24× is on the low end** (typical for DiTs is 1.5–1.7×). Two plausible reasons:
 
 1. **WAN's transformer is small (1.3B params).** Kernel-launch overhead is already a smaller fraction of total time, so Inductor's fusion has less to save. Bigger transformers (SD3 2B, FLUX 12B) typically see bigger compile wins.
