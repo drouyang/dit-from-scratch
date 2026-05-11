@@ -83,36 +83,28 @@ What you're measuring: how much Inductor + Triton fusion + autotune (optional) a
 
 Expected, single 4090:
 
-| config | model load | first call | second call | speedup (second) |
-|---|---|---|---|---|
-| baseline | **5.8 s** | **77 s** | **77 s** | 1× |
-| `--compile default` | **6.3 s** | **114 s** | **62 s** | **1.24×** |
-| `--compile max-autotune` | TBD | TBD (incl. Triton autotune) | TBD | TBD |
+| config | model load | first call | second call | speedup (second) | peak VRAM |
+|---|---|---|---|---|---|
+| baseline | **5.8 s** | **77 s** | **77 s** | 1× | **20.5 GB** |
+| `--compile default` | **6.3 s** | **119 s** | **62 s** | **1.24×** | **20.5 GB** |
+| `--compile max-autotune` | TBD | TBD | TBD | TBD | TBD |
 
 Second-call latency is the production-relevant number (steady-state). First-call latency is what you'd pay every cold start without AOT.
 
-**Why `--compile default`'s first call (114 s) is *slower* than the baseline first call (77 s).** Compile work happens *during* the first forward, not at `torch.compile(...)` time. Dynamo traces the graph, AOTAutograd captures it, Inductor lowers to Triton, and Triton emits CUDA kernels — roughly ~52 s of that for WAN's transformer. Only *after* all that does the compiled forward actually run (in ~62 s, matching second-call). So:
+**Why `--compile default`'s first call (119 s) is *slower* than the baseline first call (77 s).** Compile work happens *during* the first forward, not at `torch.compile(...)` time. Dynamo traces the graph, AOTAutograd captures it, Inductor lowers to Triton, and Triton emits CUDA kernels — roughly ~56 s of that for WAN's transformer. Only *after* all that does the compiled forward actually run (in ~62 s, matching second-call). So:
 
 ```
 baseline first call:           uncompiled_gen                  ≈ 77 s
---compile default first call:  compile_overhead + compiled_gen ≈ 52 + 62 = 114 s
+--compile default first call:  compile_overhead + compiled_gen ≈ 56 + 62 = 119 s
 --compile default second call: compiled_gen                    ≈ 62 s   ← the win
 ```
 
 You pay the compile tax once per process. After that, every call is faster. This is exactly why AOT (Experiment 2) matters for cold-start-sensitive deploys: the compile work moves *before* the process starts (`--aot save` once, ahead of time), so the next process's first call skips it entirely.
 
-> **Inductor caches kernels on disk** at `/tmp/torchinductor_$USER/` (and `~/.triton/cache/`). The 114 s number above is a **cold** first call. Re-run `python benchmark.py --compile default` a second time and the first call drops to ~70 s — Inductor hits the disk cache and skips most of the kernel compile (only Dynamo trace + cache lookup remain, ~8 s). To force a clean cold-compile measurement:
-> ```bash
-> TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) python benchmark.py --compile default
-> ```
-> This sends Inductor to a fresh temp dir for that one run; the OS cleans `/tmp` on reboot. In production this caching is a *feature* — every restart after the first sees ~70 s, not ~114 s — but it muddies cold-vs-warm benchmarks if you don't control for it.
-
 **Why 1.24× is on the low end** (typical for DiTs is 1.5–1.7×). Two plausible reasons:
 
 1. **WAN's transformer is small (1.3B params).** Kernel-launch overhead is already a smaller fraction of total time, so Inductor's fusion has less to save. Bigger transformers (SD3 2B, FLUX 12B) typically see bigger compile wins.
 2. **bf16 + FlashAttention via SDPA is already very efficient.** PyTorch's SDPA dispatcher routes attention to FlashAttention 2 automatically on Ampere+; the matmuls run in bf16 on Tensor Cores. The dominant ops are already well-tuned kernels, so Inductor's fusion is mostly cleaning up the small ops *around* them (norms, residual adds, gates) — not the hot path itself.
-
-`--compile max-autotune` will tell us whether there's more headroom (it autotunes Triton kernels) or whether 1.24× is the real ceiling for this model on this GPU. The SDPA-backend experiment is a sanity check that we're already on the fastest attention path.
 
 ### Experiment 2 — AOT cold-start vs JIT
 
@@ -143,11 +135,11 @@ What you're measuring: AOT's value is in the **first-call** column, not the seco
 
 Expected, single 4090:
 
-| config | model load | first call | second call |
-|---|---|---|---|
-| baseline | **5.8 s** (measured) | **77 s** (measured) | **77 s** (measured) |
-| `--compile default` (JIT) | **6.3 s** (measured) | **114 s** (measured; ~52 s compile + ~62 s gen) | **62 s** (measured) |
-| `--aot load` | TBD (just `.pt2` load) | TBD | TBD |
+| config | model load | first call | second call | peak VRAM |
+|---|---|---|---|---|
+| baseline | **5.8 s** | **77 s** | **77 s** | **20.5 GB** |
+| `--compile default` (JIT) | **6.3 s** | **119 s** | **62 s** | **20.5 GB** |
+| `--aot load` | TBD | TBD | TBD | TBD |
 
 `--aot load` should save the JIT-compile portion of cold start *and* skip part of `from_pretrained` (transformer loads from `.pt2` instead). For serverless / autoscaling deploys where every container restart re-pays cold-start cost, this is the big win.
 
@@ -179,12 +171,12 @@ What you're measuring: which attention kernel PyTorch's SDPA dispatcher is *actu
 
 Expected, single 4090:
 
-| config | model load | second call | speedup |
-|---|---|---|---|
-| baseline (auto) | **5.8 s** | **77 s** | 1× |
-| `--sdpa-backend flash` | TBD | TBD | ~1× (expected — already what auto picks) |
-| `--sdpa-backend efficient` | TBD | TBD | ~0.98× (expected) |
-| `--sdpa-backend cudnn` | TBD | TBD | ~1.02× (expected, sometimes a small Hopper-only win) |
+| config | model load | second call | speedup | peak VRAM |
+|---|---|---|---|---|
+| baseline (auto) | **5.8 s** | **77 s** | 1× | **20.5 GB** |
+| `--sdpa-backend flash` | TBD | TBD | ~1× (expected — already what auto picks) | TBD |
+| `--sdpa-backend efficient` | TBD | TBD | ~0.98× (expected) | TBD |
+| `--sdpa-backend cudnn` | TBD | TBD | ~1.02× (expected, sometimes a small Hopper-only win) | TBD |
 
 Differences are usually within ±5%. The interesting check is that *all backends produce identical output for the same seed* — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
 
