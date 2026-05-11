@@ -1,32 +1,34 @@
-"""Benchmark stock diffusers `WanPipeline` against `torch.compile`.
+"""Diffusers inference benchmark — one config per invocation.
 
-Three runs, side-by-side, same prompt + seed + resolution + step count:
+Four orthogonal optimization knobs (`--compile`, `--aot`, `--sdpa-backend`,
+`--offload`), each tunable independently. Pass `--help` for the full surface.
+The README composes invocations into four named experiments:
 
-  1. **diffusers baseline**: `WanPipeline.from_pretrained(...)` + `.__call__(...)`
-  2. **diffusers + torch.compile(default)**: same pipeline, transformer
-     wrapped with `torch.compile(mode="default")` — Inductor kernel fusion,
-     ~1.5–1.7× steady-state speedup, ~30–60 s warmup.
-  3. **diffusers + torch.compile(max-autotune)**: same as (2) but
-     `mode="max-autotune"` — autotunes Triton kernels for ~5–10% extra speedup,
-     5–10 minutes warmup. Skip via `--skip-max-autotune` for fast iteration.
+  Exp 1  torch.compile modes        --compile {default,max-autotune}
+  Exp 2  AOT cold-start vs JIT      --aot save / --aot load
+  Exp 3  SDPA backend selection     --sdpa-backend {flash,efficient,cudnn,math}
+  Exp 4  Offload trade-off          --offload {model,sequential}
 
-This is the diffusers-only inference benchmark. The SGLang side of the
-comparison lives in lab4.3 (`benchmark_baseline.py`, `benchmark_kernels.py`,
-`benchmark_parallel.py`), which exercises a separate inference runtime.
+One invocation runs **two inference calls back-to-back** and times each.
+That lets a single config tell two stories:
 
-It does:
-  - same prompt, same seed, same resolution, same num_inference_steps
-  - per-run wall clock + peak GPU memory (from torch.cuda.max_memory_allocated)
-  - print a small table comparing the three
+  first call  — includes JIT compile cost (for --compile), AOT load cost
+                (for --aot load), or just steady-state cost (baseline).
+  second call — steady-state per-call latency, no startup overhead.
 
-It does NOT:
-  - run multiple trials and report mean ± std (do this yourself for real numbers)
-  - separate model-load time from generation time (so first runs include warmup)
-  - control for thermal throttling
+The big AOT-vs-JIT story is the first-call column; the steady-state column
+should match between compile-JIT and AOT-load.
 
-Run:
-    python benchmark.py --prompt "a fluffy red panda eating bamboo on a tree branch"
-    python benchmark.py --skip-max-autotune   # faster iteration; skips 5-10min compile
+Wall-clock reload between invocations is ~45 s (mostly VAE + text encoder
+loading from HuggingFace cache). Accepted as the cost of orthogonal flags.
+
+Run examples:
+    python benchmark.py                                  # baseline
+    python benchmark.py --compile default                # JIT compile
+    python benchmark.py --aot save                       # one-time export
+    python benchmark.py --aot load                       # cold-start = AOT load
+    python benchmark.py --sdpa-backend flash
+    python benchmark.py --offload model
 """
 
 import argparse
@@ -34,56 +36,35 @@ import logging
 import math
 import time
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
 
-# Same suppression block as lab4.1/inference_diffusers.py — these warnings are
-# noise for our use of WAN's public diffusers checkpoint.
 warnings.filterwarnings(
     "ignore",
     message=r".*Dynamo detected a call to a `functools\.lru_cache`-wrapped function.*",
     category=UserWarning,
 )
-warnings.filterwarnings(
-    "ignore",
-    message=r".*Unable to import `torchao` Tensor objects.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    message=r".*local_dir_use_symlinks.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    message=r".*sending unauthenticated requests.*",
-)
+warnings.filterwarnings("ignore", message=r".*Unable to import `torchao` Tensor objects.*")
+warnings.filterwarnings("ignore", message=r".*local_dir_use_symlinks.*")
+warnings.filterwarnings("ignore", message=r".*sending unauthenticated requests.*")
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
-# torchao import nag is emitted via diffusers' own logger (logger.warning),
-# not warnings.warn, so the regex filter above doesn't catch it. Lower the
-# diffusers logger to ERROR.
 logging.getLogger("diffusers").setLevel(logging.ERROR)
 
 import torch
-
-# Enable TF32 on Ampere+ GPUs — ~2× speedup on fp32 matmuls (the VAE is fp32
-# in this pipeline; the transformer is bf16 and unaffected). Quality loss is
-# imperceptible for video frames.
 torch.set_float32_matmul_precision("high")
-
 
 WAN_REPO = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 
 
 @dataclass
-class RunResult:
-    """Per-backend timing record. Any field can be NaN ("not measured")
-    or 0 ("not applicable"). The summary at the end of main() reads from
-    these — no scraping of stdout required."""
-    name: str
-    load_secs: float = float("nan")
-    warmup_secs: float = float("nan")
-    gen_secs: float = float("nan")
+class Result:
+    """One invocation's record. The two timing columns are the headline."""
+    config: str
+    model_load_secs: float = float("nan")
+    first_call_secs: float = float("nan")
+    second_call_secs: float = float("nan")
     peak_mem: int = 0
     out_path: str = ""
-    skipped: bool = False
     note: str = ""
 
 
@@ -99,45 +80,47 @@ def fmt_mem(bytes_: int) -> str:
     return f"{bytes_ / 1e9:5.2f} GB"
 
 
-# ---------- diffusers, optionally compiled ------------------------------------
+# ---------- SDPA backend wrapper ---------------------------------------------
 
-def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
-    """Run stock diffusers WanPipeline, optionally with torch.compile.
+@contextmanager
+def sdpa_backend(name: str):
+    """Force a specific SDPA backend via `torch.nn.attention.sdpa_kernel`.
 
-    compile_mode:
-      None              -- pure Python WanPipeline.__call__ (the baseline)
-      "default"         -- + torch.compile with Inductor kernel fusion
-                           (no CUDA Graphs; CFG-safe with WanPipeline)
-      "reduce-overhead" -- + torch.compile with CUDA graph capture
-                           (BROKEN with WanPipeline's two-pass CFG: the second
-                            transformer call overwrites the first call's output
-                            buffer while it's still being read for extrapolation;
-                            see README for workarounds)
-      "max-autotune"    -- + torch.compile with Triton autotune
-                           (slowest compile, fastest steady-state; no CUDA Graphs)
+    `auto` is a no-op (PyTorch picks). Other choices restrict the dispatch.
+    """
+    if name == "auto":
+        yield
+        return
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+    backend = {
+        "flash":     SDPBackend.FLASH_ATTENTION,
+        "efficient": SDPBackend.EFFICIENT_ATTENTION,
+        "cudnn":     SDPBackend.CUDNN_ATTENTION,
+        "math":      SDPBackend.MATH,
+    }[name]
+    with sdpa_kernel(backend):
+        yield
 
-    For compiled runs we do a warmup call before timing so the reported number
-    is steady-state, not first-call-with-compile-time.
+
+# ---------- pipeline loading + optimization application ----------------------
+
+def build_pipeline(args):
+    """Load WanPipeline with the requested optimizations applied.
+
+    Returns (pipe, prompt_embeds, neg_embeds, model_load_secs).
     """
     from diffusers import AutoencoderKLWan, WanPipeline
-    from diffusers.utils import export_to_video
 
-    label = "diffusers" if compile_mode is None else f"diffusers + torch.compile({compile_mode})"
-    print(f"\n=== {label} ===")
     t0 = time.time()
-
     vae = AutoencoderKLWan.from_pretrained(WAN_REPO, subfolder="vae", torch_dtype=torch.float32)
     pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda")
-    pipe.vae.enable_tiling()  # avoid VAE-decode OOM at 832x480 × 49 frames on a 24 GB 4090
+    pipe.vae.enable_tiling()
 
-    # Pre-encode the prompts and offload umT5-XXL (~11 GB) to CPU before
-    # sampling. Without this, the compile-mode run OOMs on a 24 GB 4090 — the
-    # text encoder weights sit unused on cuda:0 while the compiled
-    # transformer's activations + Inductor caches need every spare GB.
-    # We do it for the baseline too so peak-VRAM rows are comparable.
+    # Pre-encode prompts on cuda so we can offload the text encoder before
+    # the compile/sample step (otherwise umT5-XXL eats ~11 GB).
     prompt_embeds, neg_embeds = pipe.encode_prompt(
         prompt=args.prompt,
-        negative_prompt=getattr(args, "negative_prompt", "") or "",
+        negative_prompt=args.negative_prompt or "",
         do_classifier_free_guidance=True,
         num_videos_per_prompt=1,
         device=torch.device("cuda"),
@@ -145,72 +128,243 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
     pipe.text_encoder.to("cpu")
     torch.cuda.empty_cache()
 
-    load_secs = time.time() - t0
-    print(f"  load:     {fmt_secs(load_secs)}")
+    # Apply --offload AFTER prompt encoding (offload helpers want a fully-
+    # constructed pipeline). `enable_*_cpu_offload` re-hooks the model.
+    if args.offload == "model":
+        pipe.enable_model_cpu_offload()
+    elif args.offload == "sequential":
+        pipe.enable_sequential_cpu_offload()
 
-    warmup_secs = float("nan")
-    if compile_mode is not None:
-        pipe.transformer = torch.compile(pipe.transformer, mode=compile_mode)
-        compile_msg = "(~30-60s warmup)" if compile_mode == "default" else "(~5-10min warmup — Triton autotune)"
-        print(f"  warming up torch.compile {compile_msg}...")
-        tw = time.time()
-        _ = pipe(
+    # Apply --compile if requested. AOT load handled in main() (different shape).
+    if args.compile and args.compile != "none":
+        pipe.transformer = torch.compile(pipe.transformer, mode=args.compile)
+
+    model_load_secs = time.time() - t0
+    return pipe, prompt_embeds, neg_embeds, model_load_secs
+
+
+def run_inference(pipe, prompt_embeds, neg_embeds, args, *, seed):
+    """One inference call with the given seed. Returns (frames, secs)."""
+    t0 = time.time()
+    with sdpa_backend(args.sdpa_backend):
+        output = pipe(
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=neg_embeds,
             height=args.height, width=args.width,
             num_frames=args.num_frames,
-            num_inference_steps=2,                  # just enough to compile
+            num_inference_steps=args.steps,
             guidance_scale=args.guidance,
-            generator=torch.Generator("cpu").manual_seed(0),
+            generator=torch.Generator("cpu").manual_seed(seed),
+        ).frames[0]
+    return output, time.time() - t0
+
+
+# ---------- AOT export + load ------------------------------------------------
+
+def run_aot_save(args) -> Result:
+    """Compile the transformer JIT, run inference to warm the cache, then
+    export the warmed graph to a .pt2 package.
+
+    The exact AOT API surface depends on the PyTorch version. We use
+    `torch.export.export` + `torch._inductor.aoti_compile_and_package`
+    (PyTorch ≥ 2.4 stable). Earlier / later versions may need adjustment;
+    see https://pytorch.org/tutorials/recipes/torch_export_aoti_python.html.
+    """
+    from diffusers.utils import export_to_video
+
+    print(f"\n=== --aot save  (→ {args.aot_path}) ===")
+    args.compile = "default"  # AOT export goes through Inductor; need JIT first
+    pipe, prompt_embeds, neg_embeds, model_load_secs = build_pipeline(args)
+    print(f"  model load: {fmt_secs(model_load_secs)}")
+
+    # Warm: run one inference to fully trace the compiled transformer.
+    print("  warming transformer (one JIT compile pass)...")
+    tw = time.time()
+    _, _ = run_inference(pipe, prompt_embeds, neg_embeds, args, seed=0)
+    print(f"  warmup:     {fmt_secs(time.time() - tw)}")
+
+    # Now export the warmed transformer.
+    print(f"  exporting to {args.aot_path}...")
+    try:
+        # Inspect one real call's args to build example_inputs (shape-stable).
+        # The transformer's forward signature in current diffusers Wan:
+        #   forward(hidden_states, timestep, encoder_hidden_states,
+        #           encoder_attention_mask=None, return_dict=True)
+        latent_shape = (
+            1, pipe.transformer.config.in_channels,
+            (args.num_frames - 1) // 4 + 1,
+            args.height // 8, args.width // 8,
         )
-        warmup_secs = time.time() - tw
-        print(f"  warmup:   {fmt_secs(warmup_secs)}")
+        example_inputs = (
+            torch.randn(latent_shape, dtype=torch.bfloat16, device="cuda"),
+            torch.tensor([500.0], device="cuda"),
+            prompt_embeds.to(torch.bfloat16),
+        )
+        exported = torch.export.export(
+            pipe.transformer._orig_mod if hasattr(pipe.transformer, "_orig_mod")
+            else pipe.transformer,
+            args=example_inputs,
+        )
+        torch._inductor.aoti_compile_and_package(exported, package_path=args.aot_path)
+        print(f"  saved {args.aot_path}")
+    except Exception as e:
+        print(f"  AOT export failed: {e}")
+        print(f"  (the AOT API moves between PyTorch versions; check the docs)")
+        return Result(config="aot-save", note=f"export failed: {e!s}",
+                      model_load_secs=model_load_secs)
+
+    return Result(
+        config="aot-save",
+        model_load_secs=model_load_secs,
+        out_path=args.aot_path,
+        note=f"exported to {args.aot_path}; use --aot load to benchmark",
+    )
+
+
+def run_aot_load(args) -> Result:
+    """Load a previously-exported .pt2 and run two inferences. Compares
+    first-call latency (the AOT win) against steady-state (matches JIT)."""
+    from diffusers import AutoencoderKLWan, WanPipeline
+    from diffusers.utils import export_to_video
+
+    print(f"\n=== --aot load  ({args.aot_path}) ===")
+    t0 = time.time()
+    vae = AutoencoderKLWan.from_pretrained(WAN_REPO, subfolder="vae", torch_dtype=torch.float32)
+    pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda")
+    pipe.vae.enable_tiling()
+    prompt_embeds, neg_embeds = pipe.encode_prompt(
+        prompt=args.prompt,
+        negative_prompt=args.negative_prompt or "",
+        do_classifier_free_guidance=True,
+        num_videos_per_prompt=1,
+        device=torch.device("cuda"),
+    )
+    pipe.text_encoder.to("cpu")
+    torch.cuda.empty_cache()
+
+    # Load the AOT package and swap into the pipeline's transformer slot.
+    # The loaded callable mimics transformer.__call__ but skips JIT compile.
+    try:
+        loaded = torch._inductor.aoti_load_package(args.aot_path)
+    except Exception as e:
+        print(f"  AOT load failed: {e}")
+        return Result(config="aot-load", note=f"load failed: {e!s}")
+
+    # Wrap so pipe.transformer(...) calls the loaded module.
+    class _AOTWrapper:
+        def __init__(self, loaded_module, ref_module):
+            self._loaded = loaded_module
+            self.config = ref_module.config
+            self.dtype = ref_module.dtype
+            self.device = ref_module.device
+        def __call__(self, **kwargs):
+            out = self._loaded(kwargs["hidden_states"], kwargs["timestep"],
+                                kwargs["encoder_hidden_states"])
+            return (out,) if kwargs.get("return_dict") is False else type(
+                "Out", (), {"sample": out})()
+    pipe.transformer = _AOTWrapper(loaded, pipe.transformer)
+
+    model_load_secs = time.time() - t0
+    print(f"  model load: {fmt_secs(model_load_secs)}  (includes .pt2 load)")
 
     torch.cuda.reset_peak_memory_stats()
-    t1 = time.time()
-    generator = torch.Generator("cpu").manual_seed(args.seed)
-    output = pipe(
-        prompt_embeds=prompt_embeds,
-        negative_prompt_embeds=neg_embeds,
-        height=args.height, width=args.width,
-        num_frames=args.num_frames,
-        num_inference_steps=args.steps,
-        guidance_scale=args.guidance,
-        generator=generator,
-    ).frames[0]
-    gen_secs = time.time() - t1
-    peak_mem = torch.cuda.max_memory_allocated()
+    print("  first call (cold)...")
+    _, first = run_inference(pipe, prompt_embeds, neg_embeds, args, seed=args.seed)
+    print(f"  first:      {fmt_secs(first)}")
 
-    suffix = "" if compile_mode is None else f"_compile_{compile_mode}"
-    out_path = f"out_diffusers{suffix}.mp4"
+    print("  second call (warm)...")
+    output, second = run_inference(pipe, prompt_embeds, neg_embeds, args, seed=args.seed + 1)
+    print(f"  second:     {fmt_secs(second)}")
+
+    peak_mem = torch.cuda.max_memory_allocated()
+    out_path = "out_diffusers_aot_load.mp4"
     export_to_video(output, out_path, fps=args.fps)
-    print(f"  generate: {fmt_secs(gen_secs)} (steady-state, post-warmup)")
-    print(f"  peak VRAM:{fmt_mem(peak_mem):>10}")
+    print(f"  peak VRAM:  {fmt_mem(peak_mem)}")
     print(f"  saved {out_path}")
 
-    # Tear down so the next backend has the GPU to itself. With torch.compile
-    # we also need to flush Dynamo's compiled-artifact cache and gc Python-side
-    # references; otherwise the next backend OOMs even after empty_cache().
-    del pipe, vae, output
-    if compile_mode is not None:
-        torch._dynamo.reset()
-    import gc; gc.collect()
-    torch.cuda.empty_cache()
-    return RunResult(
-        name=label,
-        load_secs=load_secs,
-        warmup_secs=warmup_secs,
-        gen_secs=gen_secs,
+    return Result(
+        config="aot-load",
+        model_load_secs=model_load_secs,
+        first_call_secs=first,
+        second_call_secs=second,
         peak_mem=peak_mem,
         out_path=out_path,
     )
 
 
+# ---------- non-AOT path (one invocation, two inference calls) ---------------
+
+def run_invocation(args) -> Result:
+    from diffusers.utils import export_to_video
+
+    config = _config_label(args)
+    print(f"\n=== {config} ===")
+    pipe, prompt_embeds, neg_embeds, model_load_secs = build_pipeline(args)
+    print(f"  model load: {fmt_secs(model_load_secs)}")
+
+    torch.cuda.reset_peak_memory_stats()
+
+    # First call — includes torch.compile JIT cost (if --compile) or just
+    # one cold inference (baseline). Either way, this is the "first request
+    # served from a fresh process" number.
+    print("  first call (cold)...")
+    _, first = run_inference(pipe, prompt_embeds, neg_embeds, args, seed=args.seed)
+    print(f"  first:      {fmt_secs(first)}")
+
+    # Second call — steady state.
+    print("  second call (warm)...")
+    output, second = run_inference(pipe, prompt_embeds, neg_embeds, args, seed=args.seed + 1)
+    print(f"  second:     {fmt_secs(second)}")
+
+    peak_mem = torch.cuda.max_memory_allocated()
+    out_path = _output_path(args)
+    export_to_video(output, out_path, fps=args.fps)
+    print(f"  peak VRAM:  {fmt_mem(peak_mem)}")
+    print(f"  saved {out_path}")
+
+    return Result(
+        config=config,
+        model_load_secs=model_load_secs,
+        first_call_secs=first,
+        second_call_secs=second,
+        peak_mem=peak_mem,
+        out_path=out_path,
+    )
+
+
+def _config_label(args) -> str:
+    """Short human-readable label summarizing the optimization combo."""
+    parts = []
+    if args.compile and args.compile != "none":
+        parts.append(f"compile={args.compile}")
+    if args.sdpa_backend != "auto":
+        parts.append(f"sdpa={args.sdpa_backend}")
+    if args.offload != "none":
+        parts.append(f"offload={args.offload}")
+    return "diffusers" + (" (" + ", ".join(parts) + ")" if parts else " (baseline)")
+
+
+def _output_path(args) -> str:
+    parts = ["out_diffusers"]
+    if args.compile and args.compile != "none":
+        parts.append(f"compile-{args.compile}")
+    if args.sdpa_backend != "auto":
+        parts.append(f"sdpa-{args.sdpa_backend}")
+    if args.offload != "none":
+        parts.append(f"offload-{args.offload}")
+    return "_".join(parts) + ".mp4"
+
+
 # ---------- main --------------------------------------------------------------
 
 def main():
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    # Generation knobs.
     p.add_argument("--prompt",     default="a fluffy red panda eating bamboo on a tree branch")
+    p.add_argument("--negative-prompt", default="")
     p.add_argument("--height",     type=int,   default=480)
     p.add_argument("--width",      type=int,   default=832)
     p.add_argument("--num-frames", type=int,   default=49)
@@ -218,14 +372,19 @@ def main():
     p.add_argument("--guidance",   type=float, default=5.0)
     p.add_argument("--fps",        type=int,   default=16)
     p.add_argument("--seed",       type=int,   default=42)
-    p.add_argument("--skip-diffusers",    action="store_true",
-                   help="Skip the stock diffusers baseline (e.g. you only want to time compile)")
-    p.add_argument("--skip-compile",      action="store_true",
-                   help="Skip the diffusers + torch.compile(default) run")
-    p.add_argument("--skip-max-autotune", action="store_true",
-                   help="Skip the torch.compile(max-autotune) run (~5-10min compile)")
-    p.add_argument("--negative-prompt", default="",
-                   help="Negative prompt text. Empty string uses the model's default.")
+
+    # Four orthogonal optimization knobs.
+    p.add_argument("--compile", choices=["none", "default", "max-autotune"], default="none",
+                   help="torch.compile mode for the transformer")
+    p.add_argument("--aot", choices=["none", "save", "load"], default="none",
+                   help="AOT export (save) or load a previously-exported .pt2")
+    p.add_argument("--aot-path", default="wan_transformer.pt2",
+                   help="Path for AOT save/load")
+    p.add_argument("--sdpa-backend", choices=["auto", "flash", "efficient", "cudnn", "math"],
+                   default="auto",
+                   help="Force a specific SDPA backend for attention")
+    p.add_argument("--offload", choices=["none", "model", "sequential"], default="none",
+                   help="diffusers CPU-offload mode")
     args = p.parse_args()
 
     if not torch.cuda.is_available():
@@ -234,58 +393,33 @@ def main():
     print(f"prompt: {args.prompt!r}")
     print(f"shape:  {args.num_frames} frames @ {args.width}×{args.height},  steps={args.steps},  cfg={args.guidance},  seed={args.seed}")
 
-    results: list[RunResult] = []
-    if not args.skip_diffusers:
-        results.append(run_diffusers(args))
-    if not args.skip_compile:
-        results.append(run_diffusers(args, compile_mode="default"))
-    if not args.skip_max_autotune:
-        results.append(run_diffusers(args, compile_mode="max-autotune"))
+    # Dispatch on --aot first since it's the only flag that changes the
+    # whole flow (save = export and exit; load = swap transformer for .pt2).
+    if args.aot == "save":
+        result = run_aot_save(args)
+    elif args.aot == "load":
+        result = run_aot_load(args)
+    else:
+        result = run_invocation(args)
 
-    # Summary block printed at the very end. Pulls from the RunResult records,
-    # so even if intermediate stdout is cluttered (progress bars, dynamo notes),
-    # this final block is clean and self-contained.
-    print("\n" + "=" * 88)
-    print("SUMMARY")
-    print("=" * 88)
-    print(f"prompt: {args.prompt!r}")
-    print(f"shape:  {args.num_frames} frames @ {args.width}×{args.height},  steps={args.steps},  cfg={args.guidance},  seed={args.seed}")
-    print()
-    header = f"{'backend':<42} {'load':>8} {'warmup':>8} {'generate':>9} {'peak VRAM':>10}"
+    print("\n" + "=" * 84)
+    print("RESULT")
+    print("=" * 84)
+    header = f"{'config':<44} {'load':>8} {'first':>8} {'second':>8} {'peak VRAM':>10}"
     print(header)
     print("-" * len(header))
-    for r in results:
-        if r.skipped:
-            print(f"{r.name:<42} {'(skipped: ' + r.note + ')':>38}")
-            continue
-        print(
-            f"{r.name:<42} "
-            f"{fmt_secs(r.load_secs):>8} "
-            f"{fmt_secs(r.warmup_secs):>8} "
-            f"{fmt_secs(r.gen_secs):>9} "
-            f"{fmt_mem(r.peak_mem):>10}"
-        )
-
-    # Speedups vs the plain-diffusers baseline (steady-state generate seconds).
-    base = next(
-        (r for r in results
-         if r.name == "diffusers" and not r.skipped and math.isfinite(r.gen_secs)),
-        None,
+    print(
+        f"{result.config:<44} "
+        f"{fmt_secs(result.model_load_secs):>8} "
+        f"{fmt_secs(result.first_call_secs):>8} "
+        f"{fmt_secs(result.second_call_secs):>8} "
+        f"{fmt_mem(result.peak_mem):>10}"
     )
-    if base is not None:
-        print()
-        for r in results:
-            if r is base or r.skipped or not math.isfinite(r.gen_secs):
-                continue
-            print(f"  speedup vs diffusers:  {base.gen_secs / r.gen_secs:5.2f}×   ({r.name})")
-
-    # Output paths, so you don't have to grep stdout to find the videos.
-    saved = [r for r in results if r.out_path]
-    if saved:
-        print()
-        for r in saved:
-            print(f"  output: {r.out_path:<40} ({r.name})")
-    print("=" * 88)
+    if result.note:
+        print(f"\n  note: {result.note}")
+    if result.out_path:
+        print(f"\n  output: {result.out_path}")
+    print("=" * 84)
 
 
 if __name__ == "__main__":

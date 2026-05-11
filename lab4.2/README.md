@@ -43,57 +43,107 @@ pip install -r lab4.2/requirements.txt
 
 The benchmark below loads Wan-2.1 T2V-1.3B from HuggingFace (~5 GB total: VAE + text encoder + transformer; cached on first run). The repo is public — no auth required.
 
-## Run the benchmark
+## Run the benchmarks
 
-Generate the same 3-second clip via three diffusers paths — stock, `torch.compile(default)`, `torch.compile(max-autotune)`:
+`benchmark.py` runs **one config per invocation** (orthogonal `--compile`, `--aot`, `--sdpa-backend`, `--offload` flags) and times **two inference calls back-to-back** — `first call` (cold; includes JIT compile or AOT load) and `second call` (warm steady-state). The four experiments below each compose multiple invocations into a comparison.
+
+Each invocation reloads the model (~45 s mostly for the VAE / text encoder); accepted as the cost of treating every config as a fresh run. Activate the venv from the repo root first:
 
 ```bash
 source .venv/bin/activate
 cd lab4.2
-python benchmark.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 ```
 
-Output (single 4090, ballpark — varies by driver / PyTorch version):
+### Baseline
 
-```
-prompt: 'a fluffy red panda eating bamboo on a tree branch'
-shape:  49 frames @ 832×480,  steps=30,  cfg=5.0,  seed=42
-
-=== diffusers ===
-  load:        45.2s
-  generate:   220.4s (steady-state, post-warmup)
-  peak VRAM:  10.78 GB
-  saved out_diffusers.mp4
-
-=== diffusers + torch.compile(default) ===
-  load:        45.0s
-  warming up torch.compile (this is the slow part — ~30-60s)...
-  warmup:      48.7s
-  generate:   132.8s (steady-state, post-warmup)
-  peak VRAM:  11.42 GB
-  saved out_diffusers_compile_default.mp4
-
-=== diffusers + torch.compile(max-autotune) ===
-  load:        45.0s
-  warmup:     381.2s  (autotuning Triton kernels — long)
-  generate:   118.3s (steady-state)
-  peak VRAM:  11.50 GB
-  saved out_diffusers_compile_max_autotune.mp4
-
-=== comparison ===
-backend                                  wall     peak VRAM
-----------------------------------------------------------
-diffusers                               220.4s     10.78 GB
-diffusers + torch.compile(default)      132.8s     11.42 GB
-diffusers + torch.compile(max-autotune) 118.3s     11.50 GB
-
-torch.compile(default) speedup:      1.66×  (vs diffusers baseline)
-torch.compile(max-autotune) speedup: 1.86×  (vs diffusers baseline)
+```bash
+python benchmark.py
 ```
 
-The headline: **one extra line of code (`torch.compile`) gets you ~1.6–1.9× speedup** on a single GPU, with no model edits, no runtime install, no kernel-level work. That's the whole pitch of this lab.
+One row, no optimizations. The reference point every experiment compares against. Expected on a single 4090: `first ≈ second ≈ 220 s, peak VRAM ≈ 10.8 GB`. Both call columns match because there's no JIT compile or AOT load to amortize.
 
-Pass `--skip-compile` or `--skip-max-autotune` to drop expensive warmup steps during iteration.
+### Experiment 1 — `torch.compile` modes
+
+```bash
+python benchmark.py --compile default
+python benchmark.py --compile max-autotune
+```
+
+What you're measuring: how much Inductor + Triton fusion + (optional) autotune accelerates the *transformer* forward, and how much warmup costs you for that win.
+
+Expected, single 4090:
+
+| config | first call | second call | speedup (second) |
+|---|---|---|---|
+| baseline | ~220 s | ~220 s | 1× |
+| `--compile default` | ~180 s (incl. ~50 s JIT compile) | ~130 s | ~1.7× |
+| `--compile max-autotune` | ~470 s (incl. ~340 s Triton autotune) | ~120 s | ~1.85× |
+
+Second-call latency is the production-relevant number (steady-state). First-call latency is what you'd pay every cold start without AOT.
+
+### Experiment 2 — AOT cold-start vs JIT
+
+```bash
+# One-time export (slow — warms compile, then packages):
+python benchmark.py --aot save                # writes wan_transformer.pt2
+
+# Now A/B the cold-start path against JIT compile:
+python benchmark.py --compile default         # JIT: first call pays compile
+python benchmark.py --aot load                # AOT: first call skips compile
+```
+
+What you're measuring: AOT's value is in the **first-call** column, not the second. After warmup both paths converge to the same steady state.
+
+Expected, single 4090:
+
+| config | model load | first call | second call |
+|---|---|---|---|
+| `--compile default` (JIT) | ~45 s | ~180 s (50 s compile + 130 s gen) | ~130 s |
+| `--aot load` | ~10 s (just `.pt2` load) | ~130 s | ~130 s |
+
+So `--aot load` saves you ~50 s of cold start over JIT compile, *and* skips ~35 s of pipeline `from_pretrained` (you load the transformer from `.pt2` instead). For serverless / autoscaling deploys where every container restart re-pays cold-start cost, this is the big win.
+
+> **Caveat**: AOTInductor's API has moved between PyTorch versions. If `--aot save` fails with an `AttributeError` on `torch._inductor.aoti_compile_and_package`, your PyTorch is newer or older than the script targets — check [PyTorch's AOTI tutorial](https://pytorch.org/tutorials/recipes/torch_export_aoti_python.html) for the current call signature.
+
+### Experiment 3 — SDPA backend
+
+```bash
+python benchmark.py --sdpa-backend flash      # FlashAttention 2 forced
+python benchmark.py --sdpa-backend efficient  # xFormers-style memory-efficient
+python benchmark.py --sdpa-backend cudnn      # cuDNN's fused attention
+```
+
+What you're measuring: which attention kernel PyTorch's SDPA dispatcher is *actually* picking, and whether forcing a specific one wins. Stock PyTorch on Ampere+ already auto-dispatches to `flash` — this experiment is mostly *verifying* the default and seeing the small spread between alternatives.
+
+Expected, single 4090:
+
+| config | second call | speedup |
+|---|---|---|
+| baseline (auto) | ~220 s | 1× |
+| `--sdpa-backend flash` | ~220 s | ~1× (already what auto picks) |
+| `--sdpa-backend efficient` | ~225 s | ~0.98× |
+| `--sdpa-backend cudnn` | ~215 s | ~1.02× (sometimes a small Hopper-only win) |
+
+Differences are usually within ±5%. The interesting check is that *all backends produce identical output for the same seed* — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
+
+### Experiment 4 — Offload trade-off
+
+```bash
+python benchmark.py --offload model           # whole-component CPU offload
+python benchmark.py --offload sequential      # per-submodule CPU offload
+```
+
+What you're measuring: how much **peak VRAM** drops when diffusers' offload helpers move idle components to CPU, and how much wall clock you pay for that drop.
+
+Expected, single 4090:
+
+| config | second call | peak VRAM | use case |
+|---|---|---|---|
+| baseline | ~220 s | ~10.8 GB | 24 GB+ card |
+| `--offload model` | ~245 s (+10–15%) | ~5 GB | 16 GB card |
+| `--offload sequential` | ~480 s (+120%) | ~2 GB | 12 GB consumer card |
+
+On a 4090 you don't need offload, but the experiment reveals the **trade-off**: ~10% slowdown buys ~50% VRAM headroom, ~120% slowdown buys ~80% VRAM headroom. That's how you'd plan a deployment to a 12 GB card, or how you'd run two models concurrently on the same GPU.
 
 ## Deep dive: `torch.compile` (JIT)
 
