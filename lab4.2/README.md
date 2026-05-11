@@ -60,7 +60,7 @@ cd lab4.2
 python benchmark.py
 ```
 
-One row, no optimizations. The reference point every experiment compares against. Expected on a single 4090: `first ≈ second ≈ 220 s, peak VRAM ≈ 10.8 GB`. Both call columns match because there's no JIT compile or AOT load to amortize.
+One row, no optimizations. The reference point every experiment compares against. Measured on a single 4090: `model load ≈ 5.8 s, first ≈ 77.1 s, second ≈ 77.2 s, peak VRAM ≈ 20.5 GB`. Both call columns match because there's no JIT compile or AOT load to amortize.
 
 ### Experiment 1 — `torch.compile` modes
 
@@ -75,9 +75,9 @@ Expected, single 4090:
 
 | config | first call | second call | speedup (second) |
 |---|---|---|---|
-| baseline | ~220 s | ~220 s | 1× |
-| `--compile default` | ~180 s (incl. ~50 s JIT compile) | ~130 s | ~1.7× |
-| `--compile max-autotune` | ~470 s (incl. ~340 s Triton autotune) | ~120 s | ~1.85× |
+| baseline | **77 s** (measured) | **77 s** (measured) | 1× |
+| `--compile default` | TBD (incl. JIT-compile warmup) | TBD | TBD |
+| `--compile max-autotune` | TBD (incl. Triton autotune) | TBD | TBD |
 
 Second-call latency is the production-relevant number (steady-state). First-call latency is what you'd pay every cold start without AOT.
 
@@ -98,10 +98,11 @@ Expected, single 4090:
 
 | config | model load | first call | second call |
 |---|---|---|---|
-| `--compile default` (JIT) | ~45 s | ~180 s (50 s compile + 130 s gen) | ~130 s |
-| `--aot load` | ~10 s (just `.pt2` load) | ~130 s | ~130 s |
+| baseline | **5.8 s** (measured) | **77 s** (measured) | **77 s** (measured) |
+| `--compile default` (JIT) | TBD | TBD (incl. JIT compile) | TBD |
+| `--aot load` | TBD (just `.pt2` load) | TBD | TBD |
 
-So `--aot load` saves you ~50 s of cold start over JIT compile, *and* skips ~35 s of pipeline `from_pretrained` (you load the transformer from `.pt2` instead). For serverless / autoscaling deploys where every container restart re-pays cold-start cost, this is the big win.
+`--aot load` should save the JIT-compile portion of cold start *and* skip part of `from_pretrained` (transformer loads from `.pt2` instead). For serverless / autoscaling deploys where every container restart re-pays cold-start cost, this is the big win.
 
 > **Caveat**: AOTInductor's API has moved between PyTorch versions. If `--aot save` fails with an `AttributeError` on `torch._inductor.aoti_compile_and_package`, your PyTorch is newer or older than the script targets — check [PyTorch's AOTI tutorial](https://pytorch.org/tutorials/recipes/torch_export_aoti_python.html) for the current call signature.
 
@@ -119,10 +120,10 @@ Expected, single 4090:
 
 | config | second call | speedup |
 |---|---|---|
-| baseline (auto) | ~220 s | 1× |
-| `--sdpa-backend flash` | ~220 s | ~1× (already what auto picks) |
-| `--sdpa-backend efficient` | ~225 s | ~0.98× |
-| `--sdpa-backend cudnn` | ~215 s | ~1.02× (sometimes a small Hopper-only win) |
+| baseline (auto) | **77 s** (measured) | 1× |
+| `--sdpa-backend flash` | TBD | ~1× (expected — already what auto picks) |
+| `--sdpa-backend efficient` | TBD | ~0.98× (expected) |
+| `--sdpa-backend cudnn` | TBD | ~1.02× (expected, sometimes a small Hopper-only win) |
 
 Differences are usually within ±5%. The interesting check is that *all backends produce identical output for the same seed* — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
 
@@ -139,9 +140,9 @@ Expected, single 4090:
 
 | config | second call | peak VRAM | use case |
 |---|---|---|---|
-| baseline | ~220 s | ~10.8 GB | 24 GB+ card |
-| `--offload model` | ~245 s (+10–15%) | ~5 GB | 16 GB card |
-| `--offload sequential` | ~480 s (+120%) | ~2 GB | 12 GB consumer card |
+| baseline | **77 s** (measured) | **20.5 GB** (measured) | 24 GB+ card |
+| `--offload model` | TBD (+10–15% expected) | TBD (lower peak) | 16 GB card |
+| `--offload sequential` | TBD (+120% expected) | TBD (much lower peak) | 12 GB consumer card |
 
 On a 4090 you don't need offload, but the experiment reveals the **trade-off**: ~10% slowdown buys ~50% VRAM headroom, ~120% slowdown buys ~80% VRAM headroom. That's how you'd plan a deployment to a 12 GB card, or how you'd run two models concurrently on the same GPU.
 
