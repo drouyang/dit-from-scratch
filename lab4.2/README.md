@@ -73,11 +73,11 @@ What you're measuring: how much Inductor + Triton fusion + (optional) autotune a
 
 Expected, single 4090:
 
-| config | first call | second call | speedup (second) |
-|---|---|---|---|
-| baseline | **77 s** (measured) | **77 s** (measured) | 1× |
-| `--compile default` | **114 s** (measured; incl. ~52 s JIT compile) | **62 s** (measured) | **1.24×** |
-| `--compile max-autotune` | TBD (incl. Triton autotune) | TBD | TBD |
+| config | model load | first call | second call | speedup (second) |
+|---|---|---|---|---|
+| baseline | **5.8 s** | **77 s** | **77 s** | 1× |
+| `--compile default` | **6.3 s** | **114 s** (incl. ~52 s JIT compile) | **62 s** | **1.24×** |
+| `--compile max-autotune` | TBD | TBD (incl. Triton autotune) | TBD | TBD |
 
 Second-call latency is the production-relevant number (steady-state). First-call latency is what you'd pay every cold start without AOT.
 
@@ -125,12 +125,12 @@ What you're measuring: which attention kernel PyTorch's SDPA dispatcher is *actu
 
 Expected, single 4090:
 
-| config | second call | speedup |
-|---|---|---|
-| baseline (auto) | **77 s** (measured) | 1× |
-| `--sdpa-backend flash` | TBD | ~1× (expected — already what auto picks) |
-| `--sdpa-backend efficient` | TBD | ~0.98× (expected) |
-| `--sdpa-backend cudnn` | TBD | ~1.02× (expected, sometimes a small Hopper-only win) |
+| config | model load | second call | speedup |
+|---|---|---|---|
+| baseline (auto) | **5.8 s** | **77 s** | 1× |
+| `--sdpa-backend flash` | TBD | TBD | ~1× (expected — already what auto picks) |
+| `--sdpa-backend efficient` | TBD | TBD | ~0.98× (expected) |
+| `--sdpa-backend cudnn` | TBD | TBD | ~1.02× (expected, sometimes a small Hopper-only win) |
 
 Differences are usually within ±5%. The interesting check is that *all backends produce identical output for the same seed* — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
 
@@ -145,13 +145,15 @@ What you're measuring: how much **peak VRAM** drops when diffusers' offload help
 
 Expected, single 4090:
 
-| config | second call | peak VRAM | use case |
-|---|---|---|---|
-| baseline | **77 s** (measured) | **20.5 GB** (measured) | 24 GB+ card |
-| `--offload model` | TBD (+10–15% expected) | TBD (lower peak) | 16 GB card |
-| `--offload sequential` | TBD (+120% expected) | TBD (much lower peak) | 12 GB consumer card |
+| config | model load | second call | peak VRAM | use case |
+|---|---|---|---|---|
+| baseline | **5.8 s** | **77 s** | **20.5 GB** | 24 GB+ card |
+| `--offload model` | **10.9 s** | **78 s** (+1%) | **17.0 GB** (−17%) | 20 GB card |
+| `--offload sequential` | TBD | TBD (+120% expected) | TBD (much lower peak) | 12 GB consumer card |
 
-On a 4090 you don't need offload, but the experiment reveals the **trade-off**: ~10% slowdown buys ~50% VRAM headroom, ~120% slowdown buys ~80% VRAM headroom. That's how you'd plan a deployment to a 12 GB card, or how you'd run two models concurrently on the same GPU.
+**Why `--offload model` is essentially free here** (+1% latency vs the ~10–15% you'd expect). The benchmark already does its own manual text-encoder offload (`pipe.text_encoder.to("cpu")` after `encode_prompt`) to avoid an OOM during torch.compile. That's the *expensive* offload — umT5-XXL is ~11 GB. By the time `--offload model` engages, the only remaining cycle work is the transformer ↔ VAE handoff, which is tiny (~3 GB savings, sub-second wall cost). So our measured "+1% slowdown / −17% VRAM" reflects baseline-minus-text-encoder-offload, not raw `enable_model_cpu_offload()`. The trade-off shape still holds — just shifted: each *additional* level of offload costs roughly an order of magnitude more in latency for the next chunk of VRAM. The `--offload sequential` row (per-submodule offload) is where the steep slowdown kicks in.
+
+On a 4090 you don't need offload to fit (baseline is 20.5 GB on a 24 GB card), but the experiment is how you'd plan a deployment to a 12 GB card, or run two models concurrently on the same GPU.
 
 ## Deep dive: `torch.compile` (JIT)
 
