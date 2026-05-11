@@ -116,8 +116,8 @@ def build_pipeline(args):
     pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda")
     pipe.vae.enable_tiling()
 
-    # Pre-encode prompts on cuda so we can free the text encoder before
-    # the compile/sample step (otherwise umT5-XXL eats ~11 GB).
+    # Pre-encode prompts on cuda. The pipeline doesn't need the text encoder
+    # again after this — we pass prompt_embeds=... to pipe() directly.
     prompt_embeds, neg_embeds = pipe.encode_prompt(
         prompt=args.prompt,
         negative_prompt=args.negative_prompt or "",
@@ -125,22 +125,31 @@ def build_pipeline(args):
         num_videos_per_prompt=1,
         device=torch.device("cuda"),
     )
-    # Setting text_encoder=None (rather than .cpu()-ing it) is load-bearing:
-    # diffusers' DiffusionPipeline.device property walks self.config.keys() and
-    # returns the device of the first nn.Module it finds. If text_encoder is on
-    # CPU, pipe.device returns "cpu", and pipe.prepare_latents allocates noise
-    # on CPU. The transformer (cuda) then tries Conv3d(cuda weight, cpu input),
-    # fails to find a cuDNN kernel, falls back to aten::slow_conv3d_forward
-    # (CPU-only), and errors. Setting it to None makes pipe.device skip past
-    # it to the transformer's cuda device.
-    import gc
-    del pipe.text_encoder
-    pipe.text_encoder = None
-    gc.collect()
-    torch.cuda.empty_cache()
+
+    # Free umT5-XXL (~11 GB) — but only when we're NOT using diffusers' own
+    # offload helpers. Those helpers hook every module in the pipeline,
+    # including the text encoder, and will offload it themselves; deleting it
+    # would break their accounting and leave the transformer + VAE on cuda
+    # full-time (muting the offload win).
+    #
+    # The setattr-None pattern (rather than .cpu()) is load-bearing: diffusers'
+    # DiffusionPipeline.device walks self.config.keys() and returns the device
+    # of the first nn.Module it finds. If text_encoder is on CPU, pipe.device
+    # returns "cpu", prepare_latents allocates noise on CPU, the transformer
+    # (cuda) Conv3d(cuda weight, cpu input) finds no cuDNN kernel, falls back
+    # to aten::slow_conv3d_forward (CPU-only), and errors. Setting it to None
+    # makes pipe.device skip past it to the transformer's cuda device.
+    if args.offload not in ("model", "sequential"):
+        import gc
+        del pipe.text_encoder
+        pipe.text_encoder = None
+        gc.collect()
+        torch.cuda.empty_cache()
 
     # Apply --offload AFTER prompt encoding (offload helpers want a fully-
-    # constructed pipeline). `enable_*_cpu_offload` re-hooks the model.
+    # constructed pipeline). `enable_*_cpu_offload` re-hooks the model — and
+    # the text encoder must still be present for the helper to move it to
+    # CPU itself.
     if args.offload == "model":
         pipe.enable_model_cpu_offload()
     elif args.offload == "sequential":
