@@ -116,7 +116,7 @@ def build_pipeline(args):
     pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda")
     pipe.vae.enable_tiling()
 
-    # Pre-encode prompts on cuda so we can offload the text encoder before
+    # Pre-encode prompts on cuda so we can free the text encoder before
     # the compile/sample step (otherwise umT5-XXL eats ~11 GB).
     prompt_embeds, neg_embeds = pipe.encode_prompt(
         prompt=args.prompt,
@@ -125,7 +125,18 @@ def build_pipeline(args):
         num_videos_per_prompt=1,
         device=torch.device("cuda"),
     )
-    pipe.text_encoder.to("cpu")
+    # Setting text_encoder=None (rather than .cpu()-ing it) is load-bearing:
+    # diffusers' DiffusionPipeline.device property walks self.config.keys() and
+    # returns the device of the first nn.Module it finds. If text_encoder is on
+    # CPU, pipe.device returns "cpu", and pipe.prepare_latents allocates noise
+    # on CPU. The transformer (cuda) then tries Conv3d(cuda weight, cpu input),
+    # fails to find a cuDNN kernel, falls back to aten::slow_conv3d_forward
+    # (CPU-only), and errors. Setting it to None makes pipe.device skip past
+    # it to the transformer's cuda device.
+    import gc
+    del pipe.text_encoder
+    pipe.text_encoder = None
+    gc.collect()
     torch.cuda.empty_cache()
 
     # Apply --offload AFTER prompt encoding (offload helpers want a fully-
