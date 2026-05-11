@@ -199,7 +199,7 @@ In production text-to-X (WAN, SD3, FLUX), the natural generalization is the **ne
 - **Positive prompt** drives the conditional pass: `v_cond = model(x, t, embed("a fluffy red panda"))`.
 - **Negative prompt** drives the unconditional pass: `v_uncond = model(x, t, embed("blurry, low quality, distorted"))`.
 
-You're still doing CFG — same formula, same 2× cost — but the "unconditional" pass is now actively pushing *away from* the negative prompt's content rather than just being a neutral baseline. Most pipelines default the negative prompt to the empty string `""` (which gives you something close to a true unconditional), but exposing it lets users steer generations away from artifacts they don't want. This is why `lab4.1/inference_diffusers.py` and `lab4.5/serve.py` both accept `--negative-prompt`.
+You're still doing CFG — same formula, same 2× cost — but the "unconditional" pass is now actively pushing *away from* the negative prompt's content rather than just being a neutral baseline. Most pipelines default the negative prompt to the empty string `""` (which gives you something close to a true unconditional), but exposing it lets users steer generations away from artifacts they don't want. This is why `lab4.1/inference_diffusers.py` and `lab4.3/benchmark_baseline.py` both accept `--negative-prompt`.
 
 Mechanically, lab 2.2's null class is the simplest instance of this: a special token in the embedding table for "no condition." Production scales the same idea up to a full text encoder.
 

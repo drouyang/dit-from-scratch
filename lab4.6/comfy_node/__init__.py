@@ -1,4 +1,4 @@
-"""ComfyUI WAN LoRA Sampler — example custom node for lab 4.3.
+"""ComfyUI WAN LoRA Sampler — example custom node for lab 4.4.
 
 After cloning this directory into `ComfyUI/custom_nodes/`, restart ComfyUI;
 a "WAN LoRA Sampler" node appears under the "WAN" category.

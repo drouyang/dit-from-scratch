@@ -1,9 +1,9 @@
 """Full SFT (supervised fine-tuning) of Wan-2.1 T2V-1.3B on a video-caption set.
 
 This lab's hands-on centerpiece. *Every* base parameter is trainable — no
-LoRA adapter, no parameter-efficient tricks. The trade-off vs lab 4.3:
+LoRA adapter, no parameter-efficient tricks. The trade-off vs lab 4.4:
 
-                     LoRA (lab 4.3)        Full SFT (this lab)
+                     LoRA (lab 4.4)        Full SFT (this lab)
                      ─────────────         ──────────────────
     trainable params  ~5 M (rank 16)        ~1.3 B
     optimizer state   ~40 MB                ~2.6 GB (8-bit Adam) / 10.4 GB (fp32)
@@ -11,7 +11,7 @@ LoRA adapter, no parameter-efficient tricks. The trade-off vs lab 4.3:
     overfits at       ~5k steps             ~500 steps on a tiny dataset
     quality ceiling   rank-r capped         unbounded (in principle)
 
-The flow-matching forward pass is identical to lab 4.3. What's new is
+The flow-matching forward pass is identical to lab 4.4. What's new is
 the memory machinery that makes 1.3B-parameter SFT fit a 4090:
 
   1. **8-bit AdamW** (bitsandbytes) — Adam's m and v moments stored at int8
@@ -26,7 +26,7 @@ the memory machinery that makes 1.3B-parameter SFT fit a 4090:
 
 Compute budget: this fits on a single 4090 (24 GB) at 256×256 × 17 frames,
 batch 1, grad-accum 8. Wall clock ~10–14 hours for 2000 steps (vs ~6–8 for
-the LoRA in lab 4.3 — full SFT is slower per step because every parameter
+the LoRA in lab 4.4 — full SFT is slower per step because every parameter
 gets a gradient). 4× 4090 with DDP cuts that ~4× via accelerate.
 
 Run:
@@ -85,7 +85,7 @@ def main():
     torch.manual_seed(args.seed)
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    # ── Frozen pretrained components: VAE + text encoder. Same as lab 4.3.
+    # ── Frozen pretrained components: VAE + text encoder. Same as lab 4.4.
     accelerator.print("loading Wan-VAE...")
     vae = AutoencoderKLWan.from_pretrained(WAN_REPO, subfolder="vae", torch_dtype=torch.bfloat16)
     vae.eval()
@@ -100,7 +100,7 @@ def main():
     text_encoder.requires_grad_(False)
 
     # ── The transformer is the trainable part — everything unfrozen. This is
-    # the only structural difference vs lab 4.3's LoRA loop.
+    # the only structural difference vs lab 4.4's LoRA loop.
     accelerator.print("loading WAN transformer (fully trainable)...")
     pipe = WanPipeline.from_pretrained(WAN_REPO, torch_dtype=torch.bfloat16)
     transformer = pipe.transformer
@@ -136,7 +136,7 @@ def main():
     vae = vae.to(accelerator.device)
     text_encoder = text_encoder.to(accelerator.device)
 
-    # ── Training loop. Identical math to lab 4.3 — only the optimizer's reach
+    # ── Training loop. Identical math to lab 4.4 — only the optimizer's reach
     # is different (every parameter, not just the adapter).
     step = 0
     while step < args.steps:
@@ -189,7 +189,7 @@ def main():
 def save_transformer(transformer, output_dir, step, accelerator):
     """Save the *full* transformer state dict.
 
-    Unlike lab 4.3's LoRA save (~140 MB), this is the entire transformer
+    Unlike lab 4.4's LoRA save (~140 MB), this is the entire transformer
     (~2.6 GB at bf16). That's the whole price of full SFT — your
     distribution artifact is much heavier.
     """

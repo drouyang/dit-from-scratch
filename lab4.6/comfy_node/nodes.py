@@ -1,6 +1,6 @@
 """Self-contained Wan-2.1 T2V-1.3B + LoRA sampler, packaged as a ComfyUI node.
 
-Reads the same WAN base + LoRA pair `lab4.3/sample_lora.py` uses, but exposes
+Reads the same WAN base + LoRA pair `lab4.4/sample_lora.py` uses, but exposes
 the knobs as ComfyUI graph inputs so a non-coder can adjust them visually
 and chain into other nodes (upscalers, frame interpolators, savers).
 

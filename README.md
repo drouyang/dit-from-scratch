@@ -58,10 +58,11 @@ Going from image to video is a small dimensional extension, not a redesign — t
 | Module | Topic | Lab |
 |---|---|---|
 | 4.1 | WAN inference + code tour | [lab4.1](./lab4.1) |
-| 4.2 | Inference acceleration — SGLang-Diffusion, kernel fusion, attention backends, Cache-DiT, sequence parallelism | [lab4.2](./lab4.2) |
-| 4.3 | Post-training — **LoRA** — parameter-efficient fine-tune (~5M trainable params, ~140 MB artifact) | [lab4.3](./lab4.3) |
-| 4.4 | Post-training — **Full SFT** — every parameter trainable (~1.3B params, ~2.6 GB artifact); 8-bit AdamW + gradient checkpointing fit it on a 4090 | [lab4.4](./lab4.4) |
-| 4.5 | Distribution — publish your post-trained model, ComfyUI custom node, quantization | [lab4.5](./lab4.5) |
+| 4.2 | **Diffusers** inference optimization — `torch.compile` modes (default / reduce-overhead / max-autotune), AOT export, SDPA backend selection, model offloading | [lab4.2](./lab4.2) |
+| 4.3 | **SGLang** inference optimization — kernel sweep (FA2 / FA3 / SageAttention / FlashInfer), CFG parallel, USP / Ring / Ulysses sequence parallelism, tensor parallelism | [lab4.3](./lab4.3) |
+| 4.4 | Post-training — **LoRA** — parameter-efficient fine-tune (~5M trainable params, ~140 MB artifact) | [lab4.4](./lab4.4) |
+| 4.5 | Post-training — **Full SFT** — every parameter trainable (~1.3B params, ~2.6 GB artifact); 8-bit AdamW + gradient checkpointing fit it on a 4090 | [lab4.5](./lab4.5) |
+| 4.6 | Distribution — publish your post-trained model, ComfyUI custom node, quantization | [lab4.6](./lab4.6) |
 
 ## After the labs
 

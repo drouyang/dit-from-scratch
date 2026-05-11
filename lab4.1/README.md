@@ -121,7 +121,7 @@ for _, t in enumerate(tqdm(timesteps)):
 
 Two forward passes per step is exactly the CFG cost lab 2.2 calls out — `arg_c` carries the prompt's text embeddings, `arg_null` the negative prompt's. The CFG extrapolation is the same `v_uncond + s · (v_cond − v_uncond)` formula you wrote in lab 2.2 / lab 3.2.
 
-`tqdm(timesteps)` is just a progress-bar wrapper — it iterates the same items in the same order and prints `100%|████| 50/50 [01:48<00:00, 2.17s/it]` to the console. No effect on the math; production inference servers (lab 4.2's SGLang-Diffusion) often strip it.
+`tqdm(timesteps)` is just a progress-bar wrapper — it iterates the same items in the same order and prints `100%|████| 50/50 [01:48<00:00, 2.17s/it]` to the console. No effect on the math; production inference servers (lab 4.3's SGLang-Diffusion) often strip it.
 
 **5. Offload the DiT, free the cache** — runs *after* the sampling loop, *before* the VAE decode. This is exactly the mechanism behind the `--offload_model True` flag we discussed.
 
@@ -230,9 +230,9 @@ def forward(self, x, seq_lens, grid_sizes, freqs):
 
 Three things worth noting:
 
-- **`norm_q`, `norm_k`** — RMSNorm on Q and K *before* RoPE. This is the QK-norm stabilization trick that lab 4.2's SGLang-Diffusion deep dive identifies as a fusable kernel ("JIT QK-norm").
+- **`norm_q`, `norm_k`** — RMSNorm on Q and K *before* RoPE. This is the QK-norm stabilization trick that lab 4.3's SGLang-Diffusion deep dive identifies as a fusable kernel ("JIT QK-norm").
 - **`rope_apply`** — the production version of lab 3.1's `apply_rope`. It splits the head dim into **three** frequency bands (one each for `t`, `h`, `w`) instead of two. The split is `c − 2·⌊c/3⌋` for `t` and `⌊c/3⌋` each for `h`, `w`, applied as a rotation per band.
-- **`flash_attention`** — same `Q · Kᵀ → softmax → · V` math as lab 1.3, just dispatched to the FlashAttention kernel for tiled softmax (lab 4.2's first technique row).
+- **`flash_attention`** — same `Q · Kᵀ → softmax → · V` math as lab 1.3, just dispatched to the FlashAttention kernel for tiled softmax (lab 4.3's first technique row).
 
 **`WanT2VCrossAttention.forward()`** — structurally identical to lab 3.2's `CrossAttention`. Q from image tokens, K and V from the text `context`.
 

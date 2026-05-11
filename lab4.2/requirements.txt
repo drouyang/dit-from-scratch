@@ -1,20 +1,8 @@
 torch>=2.4
-diffusers>=0.36       # the baseline (stock WanPipeline)
+diffusers>=0.36       # WanPipeline + torch.compile path
 transformers>=4.40
 accelerate>=0.27
 imageio[ffmpeg]>=2.34
 
-# SGLang-Diffusion is an extra on the main `sglang` package, not a separate
-# project. Per the official install docs, install with:
-#
-#     pip install --upgrade pip uv
-#     uv pip install "sglang[diffusion]" --prerelease=allow
-#
-# We don't pin it in this requirements.txt because the install path uses
-# `uv` and `--prerelease=allow`, which `pip install -r requirements.txt`
-# doesn't support cleanly. Run the uv command separately after installing
-# the rest of these.
-#
-# Apple MPS users: `uv pip install -e "python[all_mps]"` from a clone of
-# https://github.com/sgl-project/sglang. CUDA gets the bulk of the
-# kernel-level optimizations; MPS is a courtesy backend.
+# SGLang lives in lab4.3 with its own isolated venv — this lab doesn't
+# pull it in.

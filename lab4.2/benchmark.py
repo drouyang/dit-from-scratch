@@ -1,46 +1,40 @@
-"""Benchmark stock diffusers `WanPipeline` against SGLang-Diffusion's CLI.
+"""Benchmark stock diffusers `WanPipeline` against `torch.compile`.
 
-The point of this script is to measure end-to-end wall-clock for the
-*same prompt + seed + resolution + step count* on two backends:
+Three runs, side-by-side, same prompt + seed + resolution + step count:
 
-  1. **diffusers**: `WanPipeline.from_pretrained(...)` + `.__call__(...)`,
-     called as a Python function in this process.
-  2. **SGLang-Diffusion**: subprocess out to `sglang generate ...`, parse
-     the wall-clock back from process timing.
+  1. **diffusers baseline**: `WanPipeline.from_pretrained(...)` + `.__call__(...)`
+  2. **diffusers + torch.compile(default)**: same pipeline, transformer
+     wrapped with `torch.compile(mode="default")` — Inductor kernel fusion,
+     ~1.5–1.7× steady-state speedup, ~30–60 s warmup.
+  3. **diffusers + torch.compile(max-autotune)**: same as (2) but
+     `mode="max-autotune"` — autotunes Triton kernels for ~5–10% extra speedup,
+     5–10 minutes warmup. Skip via `--skip-max-autotune` for fast iteration.
 
-Why subprocess for SGLang and not a Python import? At the time of writing,
-SGLang-Diffusion's documented public surface is the CLI (`sglang generate`)
-and the OpenAI-compatible HTTP server (`sglang serve`). A `from sglang import
-DiffusionEngine` style import is not officially documented, so we don't use
-one — we'd be calling private code that may move.
+This is the diffusers-only inference benchmark. The SGLang side of the
+comparison lives in lab4.3 (`benchmark_baseline.py`, `benchmark_kernels.py`,
+`benchmark_parallel.py`), which exercises a separate inference runtime.
 
-This is a teaching benchmark, not a production one. It does:
+It does:
   - same prompt, same seed, same resolution, same num_inference_steps
   - per-run wall clock + peak GPU memory (from torch.cuda.max_memory_allocated)
-  - print a small table comparing the two
+  - print a small table comparing the three
 
 It does NOT:
   - run multiple trials and report mean ± std (do this yourself for real numbers)
   - separate model-load time from generation time (so first runs include warmup)
   - control for thermal throttling
-  - sweep optimization toggles (Cache-DiT, attention backends, ...). The lab's
-    README walks through the SGLang flags you can A/B individually with
-    `sglang generate --cache-dit-config ...` etc.
 
 Run:
     python benchmark.py --prompt "a fluffy red panda eating bamboo on a tree branch"
+    python benchmark.py --skip-max-autotune   # faster iteration; skips 5-10min compile
 """
 
 import argparse
 import logging
 import math
-import os
-import shutil
-import subprocess
 import time
 import warnings
 from dataclasses import dataclass
-from pathlib import Path
 
 # Same suppression block as lab4.1/inference_diffusers.py — these warnings are
 # noise for our use of WAN's public diffusers checkpoint.
@@ -105,22 +99,7 @@ def fmt_mem(bytes_: int) -> str:
     return f"{bytes_ / 1e9:5.2f} GB"
 
 
-def _find_sglang_bin() -> str | None:
-    """Locate the sglang executable.
-
-    Prefers the dedicated sglang venv at `lab4.2/.venv-sglang/bin/sglang`
-    so this script (running from lab4.2/.venv) doesn't need sglang
-    imported into its own interpreter. Falls back to whatever's on PATH.
-    """
-    # benchmark.py lives at lab4.2/benchmark.py, so the sglang venv is a sibling.
-    lab_dir = Path(__file__).resolve().parent
-    candidate = lab_dir / ".venv-sglang" / "bin" / "sglang"
-    if candidate.is_file() and os.access(candidate, os.X_OK):
-        return str(candidate)
-    return shutil.which("sglang")
-
-
-# ---------- diffusers baseline ------------------------------------------------
+# ---------- diffusers, optionally compiled ------------------------------------
 
 def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
     """Run stock diffusers WanPipeline, optionally with torch.compile.
@@ -133,13 +112,12 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
                            (BROKEN with WanPipeline's two-pass CFG: the second
                             transformer call overwrites the first call's output
                             buffer while it's still being read for extrapolation;
-                            you'd need to clone the transformer output to use it)
-      "max-autotune"    -- + torch.compile with autotune
+                            see README for workarounds)
+      "max-autotune"    -- + torch.compile with Triton autotune
                            (slowest compile, fastest steady-state; no CUDA Graphs)
 
-    Returns (gen_seconds, peak_gpu_bytes, output_path). For compiled runs we
-    do a warmup call before timing so the reported number is steady-state,
-    not first-call-with-compile-time.
+    For compiled runs we do a warmup call before timing so the reported number
+    is steady-state, not first-call-with-compile-time.
     """
     from diffusers import AutoencoderKLWan, WanPipeline
     from diffusers.utils import export_to_video
@@ -173,9 +151,8 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
     warmup_secs = float("nan")
     if compile_mode is not None:
         pipe.transformer = torch.compile(pipe.transformer, mode=compile_mode)
-        # Warmup pass — first call triggers graph capture / autotune. Use a
-        # tiny step count so warmup is short relative to the real run.
-        print(f"  warming up torch.compile (this is the slow part — ~30-60s)...")
+        compile_msg = "(~30-60s warmup)" if compile_mode == "default" else "(~5-10min warmup — Triton autotune)"
+        print(f"  warming up torch.compile {compile_msg}...")
         tw = time.time()
         _ = pipe(
             prompt_embeds=prompt_embeds,
@@ -229,81 +206,6 @@ def run_diffusers(args, *, compile_mode: str | None = None) -> RunResult:
     )
 
 
-# ---------- SGLang via subprocess ---------------------------------------------
-
-def run_sglang(args, *, cfg_parallel: bool = False) -> RunResult:
-    """Drive SGLang via the documented `sglang generate` CLI.
-
-    cfg_parallel=True passes `--enable-cfg-parallel` so the conditional and
-    unconditional CFG forwards run on separate GPUs concurrently. Auto-skips
-    on single-GPU systems.
-
-    Memory measurement here is approximate — we can't use
-    torch.cuda.max_memory_allocated across a subprocess, so we time the
-    whole thing and trust SGLang's own profiling for VRAM.
-    """
-    label = "sglang-diffusion" + (" --enable-cfg-parallel" if cfg_parallel else "")
-    if cfg_parallel and torch.cuda.device_count() < 2:
-        print(f"\n=== {label} ===  (skipped — need ≥2 GPUs)")
-        return RunResult(name=label, skipped=True, note="need ≥2 GPUs")
-
-    # Prefer the dedicated sglang venv (lab4.2/.venv-sglang/bin/sglang) so
-    # the diffusers half of the benchmark and the sglang half can each keep
-    # their own torch + cuDNN. Fall back to PATH for users who installed
-    # sglang globally or into the same venv.
-    sglang_bin = _find_sglang_bin()
-    if sglang_bin is None:
-        print(f"\n=== {label} ===  (skipped — sglang not found)")
-        print("  set up the sglang venv (from lab4.2/):")
-        print("    python3 -m venv .venv-sglang")
-        print("    source .venv-sglang/bin/activate")
-        print("    pip install --upgrade pip uv")
-        print("    uv pip install \"sglang[diffusion]\" --prerelease=allow")
-        return RunResult(name=label, skipped=True, note="sglang not found")
-
-    print(f"\n=== {label} ===")
-    out_path = "out_sglang_cfgp.mp4" if cfg_parallel else "out_sglang.mp4"
-    cmd = [
-        sglang_bin, "generate",
-        "--model-path", WAN_REPO,
-        "--prompt", args.prompt,
-        "--height", str(args.height),
-        "--width", str(args.width),
-        "--num-frames", str(args.num_frames),
-        "--num-inference-steps", str(args.steps),
-        "--guidance-scale", str(args.guidance),
-        "--seed", str(args.seed),
-        "--output-file-path", out_path,
-    ]
-    if cfg_parallel:
-        cmd.append("--enable-cfg-parallel")
-    # The exact flag names above are documented in
-    # https://sgl-project.github.io/diffusion/api/cli.html — but flag names do
-    # drift across SGLang releases. If `sglang generate --help` shows
-    # something different, adjust accordingly.
-    print(f"  $ {' '.join(cmd)}")
-
-    t0 = time.time()
-    completed = subprocess.run(cmd, capture_output=True, text=True)
-    wall = time.time() - t0
-    if completed.returncode != 0:
-        print(f"  FAILED (exit {completed.returncode}):")
-        print(completed.stderr.splitlines()[-20:] if completed.stderr else "  (no stderr)")
-        return RunResult(name=label, skipped=True, note=f"exit {completed.returncode}")
-
-    print(f"  wall:     {fmt_secs(wall)}  (includes load + generate, can't separate)")
-    print(f"  saved {out_path}")
-    # SGLang runs in a subprocess so we can't break out load vs generate, and
-    # peak VRAM isn't visible to torch in this process. Report the total wall
-    # in gen_secs with a note.
-    return RunResult(
-        name=label,
-        gen_secs=wall,
-        out_path=out_path,
-        note="wall = load + generate (subprocess, can't separate)",
-    )
-
-
 # ---------- main --------------------------------------------------------------
 
 def main():
@@ -316,12 +218,12 @@ def main():
     p.add_argument("--guidance",   type=float, default=5.0)
     p.add_argument("--fps",        type=int,   default=16)
     p.add_argument("--seed",       type=int,   default=42)
-    p.add_argument("--skip-diffusers", action="store_true")
-    p.add_argument("--skip-compile",   action="store_true",
-                   help="Skip the diffusers + torch.compile run (~1-2 min extra)")
-    p.add_argument("--skip-sglang",    action="store_true")
-    p.add_argument("--skip-sglang-cfgp", action="store_true",
-                   help="Skip the SGLang --enable-cfg-parallel run (auto-skipped on single-GPU)")
+    p.add_argument("--skip-diffusers",    action="store_true",
+                   help="Skip the stock diffusers baseline (e.g. you only want to time compile)")
+    p.add_argument("--skip-compile",      action="store_true",
+                   help="Skip the diffusers + torch.compile(default) run")
+    p.add_argument("--skip-max-autotune", action="store_true",
+                   help="Skip the torch.compile(max-autotune) run (~5-10min compile)")
     p.add_argument("--negative-prompt", default="",
                    help="Negative prompt text. Empty string uses the model's default.")
     args = p.parse_args()
@@ -337,14 +239,12 @@ def main():
         results.append(run_diffusers(args))
     if not args.skip_compile:
         results.append(run_diffusers(args, compile_mode="default"))
-    if not args.skip_sglang:
-        results.append(run_sglang(args))
-    if not args.skip_sglang_cfgp:
-        results.append(run_sglang(args, cfg_parallel=True))
+    if not args.skip_max_autotune:
+        results.append(run_diffusers(args, compile_mode="max-autotune"))
 
     # Summary block printed at the very end. Pulls from the RunResult records,
-    # so even if intermediate stdout is cluttered (progress bars, dynamo notes,
-    # subprocess output), this final block is clean and self-contained.
+    # so even if intermediate stdout is cluttered (progress bars, dynamo notes),
+    # this final block is clean and self-contained.
     print("\n" + "=" * 88)
     print("SUMMARY")
     print("=" * 88)
@@ -378,13 +278,6 @@ def main():
             if r is base or r.skipped or not math.isfinite(r.gen_secs):
                 continue
             print(f"  speedup vs diffusers:  {base.gen_secs / r.gen_secs:5.2f}×   ({r.name})")
-
-    # Per-backend notes (e.g. "wall = load + generate" for sglang).
-    notes = [r for r in results if r.note and not r.skipped]
-    if notes:
-        print()
-        for r in notes:
-            print(f"  note ({r.name}): {r.note}")
 
     # Output paths, so you don't have to grep stdout to find the videos.
     saved = [r for r in results if r.out_path]

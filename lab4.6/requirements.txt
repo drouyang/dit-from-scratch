@@ -1,0 +1,13 @@
+torch>=2.4
+diffusers>=0.36       # WanPipeline, BitsAndBytesConfig
+transformers>=4.40
+accelerate>=0.27
+safetensors>=0.4
+peft>=0.10            # LoRA loading via pipe.load_lora_weights(...)
+
+# HuggingFace upload (Path 1)
+huggingface_hub>=0.23
+
+# Quantization (Path 3) — bitsandbytes is CUDA-only.
+# Install only if you have a CUDA GPU; skip otherwise.
+bitsandbytes>=0.43 ; sys_platform == "linux"

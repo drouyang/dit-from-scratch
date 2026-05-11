@@ -1,95 +1,59 @@
-# Module 4.2 — Inference acceleration
+# Module 4.2 — Diffusers inference optimization
 
-**Goal**: take WAN inference from "it works" (lab 4.1) to "it's fast." Read what production *inference* engines actually do — kernel fusion, attention backend selection, feature caching, parallelism — by mapping each technique to (1) the upstream library that implements it, (2) which lab in this curriculum introduced the underlying concept, and (3) which `sglang` CLI flag turns it on. Run a benchmark that compares stock `diffusers` vs SGLang-Diffusion on the same prompt.
+> Part 4 — DiT in Production · [DiT from Scratch](../README.md)
 
-This lab is **inference-only**. Every technique below targets generation latency on a fixed model. Acceleration techniques that overlap with *training* (FlashAttention, mixed precision, sequence parallelism, FSDP) live in lab 4.3 / 4.5.
+**Goal**: take WAN inference from lab 4.1's "it works" to "it's fast" — *without leaving `diffusers`*. The toolset is everything PyTorch + `diffusers` give you out of the box: `torch.compile` (JIT and AOT), `F.scaled_dot_product_attention` backend selection, and `diffusers`' model-offload helpers. Lab 4.3 adds the next layer (the SGLang production runtime); this lab establishes what the *hackable* layer reaches.
 
-**4× 4090 (96 GB total VRAM) is the default** for this lab; single-GPU still covers the basic benchmark and the `torch.compile` deep dive, but the sequence-parallelism content (USP, Ring, Ulysses) needs multi-GPU.
+**Why this lab is diffusers-only**: every optimization here is something you can read, modify, and reason about with vanilla PyTorch. Single-file scripts, no extra runtime to install, no compiled-kernel ABI to manage. That makes this the right place to learn *what each lever does* before moving to lab 4.3, where the same techniques are flags on a production engine.
+
+**Compute**: this lab is **single-GPU-friendly**. A 4090 / A100 / H100 is enough for everything below. (Multi-GPU sequence parallelism + tensor parallelism live in lab 4.3, which is where 4× 4090 starts to matter.)
 
 ## Acceleration over lab 4.1
 
-Lab 4.1 used `WanPipeline.from_pretrained(...).__call__(...)` directly. That's the readable, hackable, ~30-second-load reference path — and on a recent CUDA + PyTorch build it already gets you a fair amount for free:
+Lab 4.1 ran `WanPipeline.from_pretrained(...).__call__(...)` directly. On a recent CUDA + PyTorch build that already gives you:
 
-- **FlashAttention 2** via PyTorch's `F.scaled_dot_product_attention` dispatch — no extra setup needed.
+- **FlashAttention 2** via PyTorch's `F.scaled_dot_product_attention` dispatch — no extra setup.
 - **bf16** weights and activations.
 
-What it *doesn't* get you, and what lab 4.2's deeper engines add:
+What it leaves on the table — and what this lab fixes:
 
-- Every `Linear → activation → Linear` runs as separate CUDA kernel launches — fusion (`fused_qkv`, `gate+up+SiLU`, JIT'd QK-norm, custom timestep kernel) collapses dozens of launches into one.
-- Only the SDPA/FlashAttention-2 backend is reachable; no SageAttention, no FlashAttention 3, no FlashInfer RoPE — all of which SGLang-Diffusion swaps in by flag.
-- No caching of redundant DiT computation across diffusion steps (Cache-DiT contributes ~1.7× by itself).
-- Single-GPU only — no USP / Ring / Ulysses sequence parallelism, no layerwise weight offload.
+- Every `Linear → activation → Linear` runs as separate CUDA kernel launches. **`torch.compile`** fuses these via Inductor + Triton.
+- **PyTorch's compiler also offers ahead-of-time (AOT)** export — `torch.export` + AOTInductor produce a portable `.pt2` binary that loads without re-paying compile cost.
+- PyTorch picks an SDPA backend automatically, but you can **force a specific one** (`FLASH_ATTENTION` / `EFFICIENT_ATTENTION` / `MATH`) and benchmark them against each other.
+- VRAM-tight rigs OOM on load. **`enable_model_cpu_offload()`** / **`enable_sequential_cpu_offload()`** push idle pieces to CPU; the right one buys you a fit on a 12 GB card with a small latency cost.
 
-A production inference engine fixes all of those.
+What this lab *doesn't* reach — and lab 4.3 (SGLang) does:
 
-## The technique map
+- Hand-written attention kernels (SageAttention, FlashInfer RoPE, fused QKV).
+- Multi-GPU sequence parallelism (USP / Ring / Ulysses).
+- CFG-parallel (cond + uncond on separate GPUs concurrently).
+- DiT-specific feature caching (Cache-DiT).
 
-Every optimization in SGLang-Diffusion comes from somewhere. Most are upstream libraries; SGLang-Diffusion is the orchestration layer that picks and composes them.
-
-| Technique | Where it comes from | What it does |
-|---|---|---|
-| **FlashAttention 2/3** | [`Dao-AILab/flash-attention`](https://github.com/Dao-AILab/flash-attention) — external | Tiled softmax over Q@Kᵀ that never materializes the full attention matrix. Core LLM-serving primitive. |
-| **SageAttention 2/3** | [`thu-ml/SageAttention`](https://github.com/thu-ml/SageAttention) — external | Quantized attention (INT8 / FP8 Q/K/V). Cuts attention FLOPs and memory at the cost of <1% quality. |
-| **FlashInfer RoPE** | [`flashinfer-ai/flashinfer`](https://github.com/flashinfer-ai/flashinfer) — external | Inplace, fused rotary embedding. Replaces ~5 PyTorch ops with one kernel. |
-| **Fused QKV** | model-adapter pattern, not a library | One `Linear(hidden, 3·hidden)` + split, instead of three `Linear`s. |
-| **Fused gate+up+SiLU** (SwiGLU) | usually `flashinfer.silu_and_mul` | One kernel for `silu(gate(x)) * up(x)`. |
-| **JIT QK-norm kernel** | in-house Triton / `torch.compile` | Fuses the per-head Q/K RMSNorm that some DiT variants use. |
-| **Custom timestep CUDA kernel** | in-house | Sinusoidal `t` embedding written as one CUDA kernel instead of many tiny PyTorch ops. |
-| **Cache-DiT** | [`vipshop/cache-dit`](https://github.com/vipshop/cache-dit) — external | DiT-specific feature caching: skip recomputing block outputs that haven't changed across diffusion steps. ~1.7× alone in the SGLang-Diffusion blog. |
-| **Layerwise weight offload** | in-house orchestration | Prefetch layer N+1 onto GPU during layer N's compute. Hides PCIe transfer cost. |
-| **Sequence parallelism** (Ulysses + Ring USP) | [`xfuser` / xDiT](https://github.com/xdit-project/xDiT) — external (DeepSpeed-Ulysses lineage) | Shard the long sequence (long video → many tokens) across GPUs along the sequence dim. |
-| **Tensor parallelism** | standard | Shard linear-layer weights across GPUs. |
-
-The pattern: SGLang-Diffusion's *original code* is the runtime that schedules these kernels and applies offload / parallelism plans. Each named library can be A/B-tested by toggling its flag.
+Those need a different runtime; that's lab 4.3's job.
 
 ## Setup
 
-This lab adds **one new venv** beyond the shared root `.venv` every other lab uses: an **isolated sglang venv** at `lab4.2/.venv-sglang/`. The reason: SGLang ships compiled CUDA kernels (`flashinfer-cubin`, `sgl-kernel`) pinned to a specific torch ABI. Installing it into the same venv as your diffusers stack can replace torch/cuDNN under you and break the diffusers path you spent labs 1.x–4.1 setting up. Keep sglang in its own venv; everything else (including the diffusers half of this lab's benchmark) uses the shared root `.venv`.
-
-```
-dit-from-scratch/
-├── .venv/                 ← shared root venv (labs 1.x–4.5 diffusers)
-└── lab4.2/
-    └── .venv-sglang/      ← only sglang lives here
-```
-
-From the repo root, with the shared `.venv` already set up per the parent README:
+This lab uses the shared root `.venv` every other lab in the curriculum uses — no per-lab venv needed.
 
 ```bash
-# Add this lab's diffusers deps into the shared root venv:
+# From the repo root:
 source .venv/bin/activate
 pip install -r lab4.2/requirements.txt
-deactivate
-
-# Create the isolated sglang venv. uv is recommended (the install needs
-# --prerelease=allow, which pip doesn't support as a flag):
-cd lab4.2
-python3 -m venv .venv-sglang
-source .venv-sglang/bin/activate
-pip install --upgrade pip uv
-uv pip install "sglang[diffusion]" --prerelease=allow
-deactivate
-cd ..
 ```
 
-The benchmark activates the shared root `.venv`, then invokes SGLang via subprocess against `lab4.2/.venv-sglang/bin/sglang` — it never imports SGLang into the diffusers venv. Verify both:
-
-```bash
-.venv/bin/python -c "import diffusers, torch; print('diffusers OK')"
-lab4.2/.venv-sglang/bin/sglang generate --help   # should print the SGLang CLI flags
-```
+The benchmark below loads Wan-2.1 T2V-1.3B from HuggingFace (~5 GB total: VAE + text encoder + transformer; cached on first run). The repo is public — no auth required.
 
 ## Run the benchmark
 
-Generate the same 3-second clip via three backends — stock diffusers, diffusers + `torch.compile`, and SGLang-Diffusion. Run from `lab4.2/` with the shared root venv activated (the script subprocess-invokes the sglang venv's `sglang` binary itself):
+Generate the same 3-second clip via three diffusers paths — stock, `torch.compile(default)`, `torch.compile(max-autotune)`:
 
 ```bash
-source .venv/bin/activate    # from the repo root
+source .venv/bin/activate
 cd lab4.2
 python benchmark.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 ```
 
-Output:
+Output (single 4090, ballpark — varies by driver / PyTorch version):
 
 ```
 prompt: 'a fluffy red panda eating bamboo on a tree branch'
@@ -109,307 +73,192 @@ shape:  49 frames @ 832×480,  steps=30,  cfg=5.0,  seed=42
   peak VRAM:  11.42 GB
   saved out_diffusers_compile_default.mp4
 
-=== sglang-diffusion ===
-  $ sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers ...
-  wall:       82.1s  (includes load + generate, can't separate)
-  saved out_sglang.mp4
-
-=== sglang-diffusion --enable-cfg-parallel ===
-  $ sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers ... --enable-cfg-parallel
-  wall:       49.6s  (includes load + generate, 2 GPUs)
-  saved out_sglang_cfgp.mp4
+=== diffusers + torch.compile(max-autotune) ===
+  load:        45.0s
+  warmup:     381.2s  (autotuning Triton kernels — long)
+  generate:   118.3s (steady-state)
+  peak VRAM:  11.50 GB
+  saved out_diffusers_compile_max_autotune.mp4
 
 === comparison ===
 backend                                  wall     peak VRAM
 ----------------------------------------------------------
 diffusers                               220.4s     10.78 GB
-diffusers + torch.compile               132.8s     11.42 GB
-sglang-diffusion                         82.1s    (see sglang logs)
-sglang-diffusion --enable-cfg-parallel   49.6s    (see sglang logs)
+diffusers + torch.compile(default)      132.8s     11.42 GB
+diffusers + torch.compile(max-autotune) 118.3s     11.50 GB
 
-torch.compile speedup:               1.66×  (vs diffusers baseline)
-sglang:                              2.69×  (vs diffusers baseline)
-sglang + cfg-parallel (2 GPUs):      4.44×  (vs diffusers baseline)
+torch.compile(default) speedup:      1.66×  (vs diffusers baseline)
+torch.compile(max-autotune) speedup: 1.86×  (vs diffusers baseline)
 ```
 
-Numbers vary by GPU, drivers, and SGLang version. The shape:
-- `torch.compile` alone gets ~1.5–1.7× (Inductor kernel fusion).
-- `sglang-diffusion` gets ~2.5–3× on a single GPU via its custom inference runtime — fused/quantized kernels and attention-backend choices beyond what `torch.compile` reaches. Per-technique attribution is in the A/B exercises section below.
-- `sglang --enable-cfg-parallel` adds another ~1.6× on top of single-GPU SGLang by running the conditional and unconditional CFG forwards on separate GPUs concurrently. Auto-skipped on single-GPU machines.
+The headline: **one extra line of code (`torch.compile`) gets you ~1.6–1.9× speedup** on a single GPU, with no model edits, no runtime install, no kernel-level work. That's the whole pitch of this lab.
 
-## Toggle map (the SGLang-Diffusion flags)
+Pass `--skip-compile` or `--skip-max-autotune` to drop expensive warmup steps during iteration.
 
-What makes SGLang-Diffusion teachable: every optimization in the technique map up top is independently turn-on-able from the CLI. From the [official CLI docs](https://sgl-project.github.io/diffusion/api/cli.html):
-
-| Optimization | Flag |
-|---|---|
-| Cache-DiT | `--cache-dit-config <path>` (or `SGLANG_CACHE_DIT_ENABLED=true`) |
-| Attention backend | `--attention-backend {fa,sage,xformers,native,_flash_3_hub}` |
-| Layerwise weight offload | `--dit-layerwise-offload true` |
-| Sequence parallelism | `--sp-degree N`, `--ulysses-degree N`, `--ring-degree N` |
-| CFG parallelism (run cond + uncond on separate GPUs) | `--enable-cfg-parallel` |
-| Tensor parallelism | `--tp-size N` |
-| VAE memory | `--vae-tiling`, `--vae-slicing` |
-| Text-encoder offload | `--text-encoder-cpu-offload`, `--pin-cpu-memory` |
-
-## Suggested A/B exercises
-
-The lab's deeper exercise, once the basic benchmark works: pick one flag from the toggle map, run the same prompt with and without it, compare wall clock. *Which optimization buys you what.*
-
-```bash
-# Baseline (FlashAttention default):
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --attention-backend fa --save-output run_fa.mp4
-
-# Switch to SageAttention (quantized):
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --attention-backend sage --save-output run_sage.mp4
-
-# Add Cache-DiT:
-SGLANG_CACHE_DIT_ENABLED=true sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
-    --prompt "..." --attention-backend fa --save-output run_fa_cachedit.mp4
-
-# Layerwise offload (helpful on 12 GB cards):
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --dit-layerwise-offload true --save-output run_offload.mp4
-```
-
-Each run gives you a wall-clock number. Build a small table; the per-technique deltas are roughly what the SGLang-Diffusion blog reports.
-
-## Deep dive: torch.compile + AOT for inference
-
-The other production lever, complementary to SGLang-Diffusion's kernel composition: PyTorch's compiler. **One line of code, ~1.3–1.8× speedup on a single GPU**, no SGLang install needed. Works on top of stock `WanPipeline`.
-
-### `torch.compile` (JIT)
+## Deep dive: `torch.compile` (JIT)
 
 ```python
 pipe = WanPipeline.from_pretrained(...).to("cuda")
 pipe.transformer = torch.compile(pipe.transformer, mode="default")
 ```
 
-That's it. The first inference call triggers compilation (~30–60 s warmup); subsequent calls are fast.
+That's it. The first inference call triggers compilation (~30–60 s warmup); subsequent calls reuse the compiled graph and run fast.
 
-> **Why `mode="default"` and not `mode="reduce-overhead"` on a single 4090.** `reduce-overhead` is theoretically the faster mode for diffusion sampling (it adds CUDA graph capture on top of Inductor fusion). It does **not** work on a single GPU running `WanPipeline` because the pipeline calls the transformer **twice per step** (conditional + unconditional, for CFG), and the second call's CUDA Graph replay aliases over the first call's output buffer while it's still being read for the `v_uncond + s · (v_cond − v_uncond)` extrapolation. You see `RuntimeError: accessing tensor output of CUDAGraphs that has been overwritten`. Workarounds — wrap the transformer to clone its output, run the two CFG branches on separate GPUs (CFG parallel, ~1.8× over single-GPU default), or wait for diffusers to ship `cudagraph_mark_step_begin()` between calls — are detailed in Pitfalls below. **For a single-4090 baseline, `mode="default"` is the realistic ceiling.**
+### What `mode` does
 
-What `mode` does:
+| Mode | What it adds | When to use |
+|---|---|---|
+| **`default`** | TorchDynamo + AOTAutograd + Inductor. Constant folding, dead-code elimination, kernel fusion via Triton. | **Default choice.** Reliable, ~1.5–1.7× speedup, ~30–60 s warmup. |
+| **`reduce-overhead`** | Adds CUDA Graph capture on top of `default`. Eliminates per-step Python and kernel-launch overhead. | *Theoretically* best for diffusion sampling loops, but **broken with WAN-style CFG**. See pitfall below. |
+| **`max-autotune`** | Autotunes Triton kernels at compile time. No CUDA Graphs. | Production builds. ~5–10 minutes warmup for ~5–10% extra steady-state speedup over `default`. |
 
-- **`default`** — TorchDynamo + AOTAutograd + Inductor. Constant folding, dead-code elimination, kernel fusion via Triton. **What this lab uses.**
-- **`reduce-overhead`** — adds CUDA graph capture on top. Eliminates per-step Python and kernel-launch overhead. Theoretically the best mode for diffusion sampling loops, but **broken with `WanPipeline`'s two-pass CFG**: the second transformer call's CUDA Graph replay overwrites the first call's output buffer while it's still being read for the `v_uncond + s · (v_cond − v_uncond)` extrapolation, raising `RuntimeError: accessing tensor output of CUDAGraphs that has been overwritten`. Workarounds: clone the transformer output between calls (requires wrapping the transformer module), or call `torch.compiler.cudagraph_mark_step_begin()` between the conditional and unconditional forwards (requires patching diffusers' pipeline).
-- **`max-autotune`** — autotunes Triton kernels at compile time, no CUDA Graphs. ~5–10 minutes of compile, ~5–10% extra steady-state speedup over `default`. Worth it for production builds, not dev iteration.
+### Pitfall: `reduce-overhead` and CFG-batched pipelines
 
-Pitfalls:
+`reduce-overhead` would be the right mode for diffusion sampling — same model, called N times, perfect for CUDA Graphs. It does **not** work on `WanPipeline` as shipped because the pipeline calls the transformer **twice per step** (conditional + unconditional, for CFG), and the second call's CUDA Graph replay overwrites the first call's output buffer while it's still being read for the `v_uncond + s · (v_cond − v_uncond)` extrapolation. You see:
 
-- **Dynamic shapes recompile.** Vary `num_frames` between calls and you'll trigger a recompile. Either fix the shape, or accept the recompile cost.
-- **First call is slow.** Always exclude warmup from your benchmarks.
-- **VAE is rarely worth compiling.** Most of the compute is in the transformer; compiling the VAE adds compile-time cost without proportional speedup.
-- **CFG-batched pipelines and CUDA Graphs.** Any pipeline that calls the model twice per step (CFG) is incompatible with `mode="reduce-overhead"` unless you clone outputs between calls. SGLang-Diffusion handles this in its own runtime; `torch.compile` doesn't.
+```
+RuntimeError: accessing tensor output of CUDAGraphs that has been overwritten
+```
 
-`benchmark.py` in this lab includes a `torch.compile` path so you can A/B against the stock diffusers baseline on the same prompt/seed.
+Three known workarounds, none yet shipped in stock diffusers as of writing:
 
-### AOT compilation (`torch.export` + AOTInductor)
+1. **Wrap the transformer's output in a `.clone()`** — adds one buffer copy per call, eliminates the aliasing. ~1.1× slower than ideal but enables `reduce-overhead` to work; usually still a net win vs `default`.
+2. **Call `torch.compiler.cudagraph_mark_step_begin()` between cond and uncond forwards** — tells the CUDA Graph that the next call is a separate step, so it allocates fresh output buffers. Needs patching diffusers' pipeline (~5 lines).
+3. **Run cond + uncond on separate GPUs (CFG parallel)** — each transformer copy sees only one forward per step → no aliasing. Faster than either of the above, but requires ≥2 GPUs. Covered in lab 4.3 with SGLang's `--enable-cfg-parallel` flag.
 
-`torch.compile` is JIT — compile happens in your process, on first call. **AOTInductor** lets you compile *ahead of time* and ship a self-contained `.pt2` artifact you can load without Python in the loop.
+For a single-GPU diffusers run, **`mode="default"` is the realistic ceiling** until diffusers ships one of the workarounds.
+
+### Other pitfalls
+
+- **Dynamic shapes recompile.** Vary `num_frames` or `height` / `width` between calls and you trigger a recompile (visible as a 30+ s stall on the next call). Either fix the shape, or accept the recompile cost.
+- **First call is slow.** Always exclude warmup from your benchmarks; `benchmark.py` does this for you.
+- **VAE rarely worth compiling.** Most compute is in the transformer; compiling the VAE adds compile-time cost without proportional speedup.
+
+## Deep dive: AOT compilation (`torch.export` + AOTInductor)
+
+`torch.compile` is JIT — compile happens *in your process, on first call*. The compiled artifact dies with the process. **AOTInductor** lets you compile *ahead of time* and ship a self-contained `.pt2` binary you can load without paying the JIT cost again.
 
 ```python
-# Compile once, save artifact:
+import torch
+from diffusers import WanPipeline
+
+pipe = WanPipeline.from_pretrained(...).to("cuda")
+
+# 1) Build example inputs that capture the full input signature of transformer.forward
+example_inputs = (
+    torch.randn(1, 16, 13, 60, 104, dtype=torch.bfloat16, device="cuda"),  # hidden_states
+    torch.tensor([500.0], device="cuda"),                                   # timestep
+    torch.randn(1, 512, 4096, dtype=torch.bfloat16, device="cuda"),         # encoder_hidden_states
+)
+
+# 2) Export → AOT compile → package
 exported = torch.export.export(pipe.transformer, args=example_inputs)
-torch._inductor.aoti_compile_and_package(exported, "wan_transformer.pt2")
+torch._inductor.aoti_compile_and_package(
+    exported,
+    package_path="wan_transformer.pt2",
+)
 
-# Later, in production:
+# 3) Later (different process, possibly different machine):
 loaded = torch._inductor.aoti_load_package("wan_transformer.pt2")
-output = loaded(z_t, t, text_embeds, mask)
+output = loaded(*example_inputs)
 ```
 
-Why production cares:
+### Why production cares
 
-- **No Python overhead at inference.** The packaged binary is self-contained C++.
-- **Shippable.** Build once on a beefy box, deploy to any GPU with the right CUDA version.
-- **Composable.** Wrap the AOT-compiled transformer in a regular Python sampling loop; only the hot inner forward is "compiled."
+- **No Python overhead at inference.** The packaged binary is self-contained C++. Load it from any wrapper (Python, C++, Triton Inference Server) without paying for `torch.compile`'s JIT warmup or its Python control flow.
+- **Shippable.** Build once on a beefy machine, deploy to any GPU with a compatible CUDA version. Frees the inference host from needing the full PyTorch + compiler toolchain.
+- **Composable.** AOT-compile only the hot transformer; wrap it in a regular Python sampling loop. The loop stays hackable, the inner forward is "compiled C++."
 
-Caveats:
+### Caveats
 
-- API is still evolving (`torch._inductor.aoti_compile_and_package`, `torch._inductor.aoti_load_package`) — check current PyTorch docs for the latest signatures.
-- AOT with dynamic shapes is doable but harder; many production deployments fix the shape first.
+- **API is still evolving.** `torch.export` and AOTInductor are stable enough for production use (PyTorch 2.4+) but the exact function names (`torch._inductor.aoti_compile_and_package`, `torch._inductor.aoti_load_package`) may move; check the current PyTorch docs.
+- **Dynamic shapes are harder.** AOT export with truly dynamic shapes is doable via `dynamic_shapes` in `torch.export.export(...)`, but most production deployments fix the shape (e.g., one `.pt2` per resolution preset) and accept the storage cost.
+- **No backward.** AOTInductor is forward-only. Training keeps using `torch.compile` JIT.
 
-### How `torch.compile` and SGLang-Diffusion overlap
+### When AOT beats JIT
 
-Most of SGLang-Diffusion's "JIT" kernels (the QK-norm fusion, fused gate+up+SiLU, fused QKV) are conceptually what `torch.compile` would generate from the same Python. SGLang-Diffusion adds three things `torch.compile` can't reach:
+AOT shines when warmup time matters or repeated cold starts hurt:
 
-- **Ahead-of-time decisions** — which attention backend, which precision, which caching policy.
-- **External kernel libraries** — FlashInfer, Cache-DiT — `torch.compile` uses Inductor + Triton, doesn't dispatch into other libraries.
-- **Multi-GPU orchestration** — USP (sequence parallelism), layerwise weight offload — outside `torch.compile`'s purview entirely.
+- Serverless / autoscaling deploys where each container restart would re-pay JIT compile.
+- Embedded / mobile-adjacent deployments where Python isn't desired.
+- Multi-model orchestrators where you load and unload models dynamically.
 
-For single-GPU inference, **`torch.compile` alone gets you most of the way.** SGLang-Diffusion adds another 1.5–2× on top by composing all the parts `torch.compile` can't reach.
+For a long-running single-process server, plain `torch.compile` JIT is fine — you pay the warmup once.
 
-## Deep dive: sequence parallelism (USP = Ring + Ulysses)
+## Deep dive: SDPA backend selection
 
-Why video DiT specifically needs this: at 81 frames × 720p, the patchified token count is millions. The attention `Q @ Kᵀ` matrix at that length doesn't fit a single GPU's memory regardless of any other optimization. Image DiT hits ~16k tokens at most and never needs sequence sharding; video forces it.
-
-This is **the technique that earns the curriculum's 4090×4 compute target**. On 1× 4090 you'd just be reading the mental model; on 4× 4090 you can actually run the toggles below and watch wall-clock scale.
-
-### Ring Attention — shard sequence, stream K/V
-
-Each of N GPUs holds 1/N of the sequence's `Q`, `K`, `V`. To compute attention, every GPU needs to see every other GPU's K/V slice. Ring Attention does this by *streaming* K/V chunks around the GPUs:
-
-```
-4 GPUs, sequence sharded 4-way
-─────────────────────────────────────────────────
-GPU 0:  Q[0]    K[0],V[0]
-GPU 1:  Q[1]    K[1],V[1]
-GPU 2:  Q[2]    K[2],V[2]
-GPU 3:  Q[3]    K[3],V[3]
-
-Step 1:  each GPU does partial attention(Q[i], K[i], V[i])
-Step 2:  K/V chunks rotate clockwise; GPU i now has K[i-1], V[i-1]
-         partial attention(Q[i], K[i-1], V[i-1]); update online softmax
-Step 3:  rotate again; partial attention with K[i-2], V[i-2]
-Step 4:  rotate again; partial attention with K[i-3], V[i-3]
-─────────────────────────────────────────────────
-After N steps, every GPU has the full attention output for *its* Q chunk.
-```
-
-The softmax is updated using the **same online-softmax trick FlashAttention uses** (track running max + rescale partial sums). After N rounds, results are mathematically identical to single-GPU attention.
-
-**Communication overlaps with compute** — while GPU `i` computes attention with the current K/V chunk, the next chunk is in-flight from GPU `i+1`. Bandwidth-efficient; latency-tolerant.
-
-### Ulysses Attention — shard heads, all-to-all
-
-Same goal, totally different communication pattern:
-
-```
-Initial layout: sequence-sharded
-  GPU i has [Q[i], K[i], V[i]]   shape (seq/N, all_heads, head_dim)
-
-→ All-to-all #1: redistribute to head-sharded
-  GPU i has [Q, K, V]            shape (full_seq, n_heads/N, head_dim)
-
-→ Local attention: each GPU does standard attention on its head slice
-
-→ All-to-all #2: redistribute back to sequence-sharded
-  GPU i has output[i]            shape (seq/N, all_heads, head_dim)
-```
-
-Communication: **2× all-to-all per attention layer**. Lower latency than Ring (`2` rounds vs `N` rounds), but consumes more total bandwidth at large `N`. Better for shorter sequences / fewer GPUs.
-
-### USP — combine both
-
-xDiT's contribution: shard the sequence in *two* dimensions. Use Ring across many GPUs (good bandwidth utilization) and Ulysses *within* a small Ring group (low latency for the inner step).
-
-```
-8-GPU example:  --ulysses-degree 2 --ring-degree 4
-
-  Inner: 2-way Ulysses (head-shard via all-to-all)
-  Outer: 4-way Ring   (sequence-shard via streaming K/V)
-```
-
-Tuning rule of thumb: **Ulysses degree should match NVLink topology** (NVLink-connected pairs do the all-to-all efficiently); **Ring degree spans across NVLink boundaries** (higher latency tolerance there).
-
-### Diffusion-specific complications
-
-1. **CFG batching.** Conditional and unconditional forwards run as one `(2·B, ...)` batch. Sequence parallelism has to be CFG-aware so the all-to-all doesn't shuffle the conditional samples into the unconditional ones.
-2. **3D RoPE positions.** Sharded sequences need consistent `(t, h, w)` indices per token — each shard must know which slice of the global position grid it owns. xDiT handles this; if you write your own SP, it's the bug to watch for.
-3. **Cross-attention K/V are tiny** (77 text tokens × hidden). **Don't** sequence-shard them — replicate per GPU. They're cheap.
-
-### Multi-GPU exercise (4× 4090 default)
-
-```bash
-# Single GPU baseline:
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --sp-degree 1
-
-# Pure Ulysses (all-to-all only), 4 GPUs:
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --sp-degree 4 --ulysses-degree 4 --ring-degree 1
-
-# Pure Ring (streaming K/V only), 4 GPUs:
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --sp-degree 4 --ulysses-degree 1 --ring-degree 4
-
-# USP hybrid (2-way Ulysses × 2-way Ring), 4 GPUs:
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --sp-degree 4 --ulysses-degree 2 --ring-degree 2
-```
-
-All four should produce identical output for the same seed (sequence parallelism is mathematically equivalent to single-GPU). Differences are in wall clock and per-GPU memory. At this scale (1.3B model, 480p video), the four 4090s aren't NVLinked so all-to-all bandwidth is PCIe-limited — Ring tends to win over Ulysses. At production scales (14B + 720p × 81 frames on NVLinked H100s), USP hybrid wins, and it's the difference between "fits" and "doesn't fit."
-
-### Where to read
-
-- **[Ring Attention paper (Liu et al. 2023)](https://arxiv.org/abs/2310.01889)** — the streaming-K/V scheme.
-- **[DeepSpeed-Ulysses paper (Jacobs et al. 2023)](https://arxiv.org/abs/2309.14509)** — the all-to-all scheme.
-- **[`xfuser` / xDiT source](https://github.com/xdit-project/xDiT)** — production implementation; the diffusion-specific glue (CFG-aware SP, 3D RoPE handling) lives here.
-- **[`Wan-Video/Wan2.2/wan/distributed/`](https://github.com/Wan-Video/Wan2.2/tree/main/wan/distributed)** — a real production team's adaptation of xfuser; smaller surface area than xfuser itself.
-
-## Deep dive: CFG parallel (cond + uncond on separate GPUs)
-
-A coarser multi-GPU pattern than USP, and orthogonal to it. The classifier-free-guidance step needs **two** transformer forwards per sampling step — one with the prompt, one with the negative prompt — and the two are independent until the extrapolation. So you can put one branch on each of two GPUs and run them concurrently:
-
-```
-single-GPU CFG:                       CFG parallel:
-                                       
-   transformer(prompt)        ──►      GPU 0: transformer(prompt)    ┐  concurrent
-   ↓ wait                                                            │  (different
-   transformer(neg)           ──►      GPU 1: transformer(neg)       ┘   streams)
-   ↓                                       ↓
-   v_uncond + s·(v_cond − v_uncond)         gather → v_uncond + s·(v_cond − v_uncond)
-```
-
-Wall clock per step drops from ~2T to ~T (where T is one forward), at a memory cost of an extra transformer copy on the second GPU. SGLang-Diffusion exposes this as `--enable-cfg-parallel`. xfuser/xDiT calls it `cfg_degree`.
-
-### What `--enable-cfg-parallel` does internally
-
-The pattern in plain PyTorch — what SGLang-Diffusion's runtime composes around your prompt and the model:
+`F.scaled_dot_product_attention` (used by `WanTransformer3DModel`'s attention internally) picks a backend automatically. You can force a specific one:
 
 ```python
-# Two transformer copies (deepcopy, one per GPU)
-transformer_0 = pipe.transformer.to("cuda:0")
-transformer_1 = copy.deepcopy(pipe.transformer).to("cuda:1")
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
-# Inside the sampling loop, per step:
-z_t_1 = z_t.to("cuda:1", non_blocking=True)
-cond   = transformer_0(z_t,   t, encoder_hidden_states=prompt_embeds_0)[0]
-uncond_remote = transformer_1(z_t_1, t, encoder_hidden_states=neg_embeds_1)[0]
-uncond = uncond_remote.to("cuda:0")                          # implicit sync
-noise  = uncond + guidance * (cond - uncond)
+with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+    output = pipe(prompt=...)
 ```
 
-The two `transformer_*(...)` calls dispatch their work to different CUDA streams on different devices and return immediately (CUDA is async). The actual GPU compute on the two cards runs **in parallel**. The `.to("cuda:0")` on the unconditional output is what synchronizes — it blocks until cuda:1's transformer finishes, then memcpies the result.
+| Backend | What it is | When to use |
+|---|---|---|
+| `FLASH_ATTENTION` | FlashAttention 2 (or FA3 on H100 if available). | Default for long sequences. What most production deployments get. |
+| `EFFICIENT_ATTENTION` | xFormers' memory-efficient attention. Different kernel, similar idea. | When FlashAttention is unavailable (older hardware, exotic dtypes) or you suspect a FA-specific bug. |
+| `MATH` | Naive PyTorch `softmax(QKᵀ/√d) · V`. | Debugging only. Slow. |
+| `CUDNN_ATTENTION` | cuDNN's fused attention. | Available in recent PyTorch + cuDNN; sometimes the fastest path on Hopper. |
 
-That's it. No `torchrun`, no `torch.distributed`, no NCCL — just two CUDA contexts coordinated implicitly through PyTorch's stream model. SGLang-Diffusion's implementation adds:
+The benchmark accepts `--sdpa-backend` for a quick A/B; usually `FLASH_ATTENTION` wins for video DiT at production resolutions (long sequences favor FA's tiled algorithm) and the others are within ±5%. The interesting thing isn't the win — it's verifying that **all backends produce identical output for the same seed** (sequence parallelism / quantized attention break this; SDPA backends don't).
 
-- A reasonable per-GPU memory budget (offloading the text encoder after encoding so the transformer + activations have room).
-- Composability with USP (CFG parallel × Ring × Ulysses, all configurable via flags).
-- Production-grade error handling for the case where the two GPUs go out of sync.
+## Deep dive: model offloading
 
-For learning the *mechanics*, the snippet above is the whole story. For *running it*, use `--enable-cfg-parallel`.
+For 12 GB / 16 GB consumer cards, the full Wan-2.1-1.3B pipeline (~12 GB at bf16 with VAE + text encoder + transformer all resident) doesn't comfortably fit alongside activations. `diffusers` ships two offload helpers:
+
+```python
+pipe.enable_model_cpu_offload()       # default choice
+pipe.enable_sequential_cpu_offload()  # more aggressive
+```
+
+| Helper | What it does | Latency cost | When to use |
+|---|---|---|---|
+| `enable_model_cpu_offload()` | Moves *whole components* (VAE, text encoder, transformer) to CPU when not actively in use; brings the one in use back to GPU. | ~5–10% per inference call. | Default for tight-VRAM rigs. Almost no quality of life cost. |
+| `enable_sequential_cpu_offload()` | Moves individual *submodules* (per-layer) on and off GPU on demand. | 1.5–3× slower per call. | When even `enable_model_cpu_offload` OOMs. Fits Wan-2.1-1.3B on a 6 GB card. |
+
+`benchmark.py` exposes `--offload model` / `--offload sequential` to A/B these.
+
+### Why this is a diffusers thing, not a general thing
+
+Both helpers are pipeline-aware: they know which submodules belong to which component and can move them as a unit. SGLang (lab 4.3) has its own offloading flag (`--dit-layerwise-offload`) that does the per-layer version; the pattern is the same, only the runtime differs.
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `benchmark.py` | Runs the diffusers baseline + `torch.compile(default)` + `torch.compile(max-autotune)` with peak-VRAM tracking, side-by-side comparison, optional `--offload` / `--sdpa-backend` toggles. |
+| `requirements.txt` | torch, diffusers, transformers, accelerate, imageio. |
 
 ## Discussion
 
-### Training vs inference
+### What you've learned
 
-Every technique in this lab is for inference. The training-relevant subset:
+After this lab, you can read a diffusion model's forward pass and identify, without external tools:
 
-- **FlashAttention** — works in training too (and `WanPipeline`'s training flavor in `diffusers` already uses it under the hood when available).
-- **Mixed precision (bf16)** — training, yes (lab 4.3 / 4.5 already use it).
-- **Sequence parallelism** — works in training too via `xfuser` / DeepSpeed-Ulysses; it's used to train long-video models that don't fit on one GPU.
-- **FSDP (params + grads + optim sharded across GPUs)** — *training-only*. The dominant strategy for training a model that doesn't fit one GPU's worth of parameters + Adam state. Lab 4.5's full SFT discusses where it kicks in (1.3B doesn't need it; 14B / Wan-2.2-A14B does). At inference there's no optimizer state and no backward pass to shard, so FSDP doesn't apply — the equivalent shape is **tensor parallelism** (already in this lab's technique map).
-- **Cache-DiT** — *inference-only*. Caching only works when steps converge to similar outputs, which doesn't apply during training where every step changes the loss landscape.
-- **Quantized attention (SageAttention)** — inference-only at production quality. Quantized training is its own research area (FP8 training is reaching production but mostly for LLMs).
+- Which parts compile cleanly under Inductor (most of the transformer); which don't (data-dependent control flow, dynamic shapes).
+- When a CUDA Graph optimization is going to break (any pipeline with two-pass CFG, batched generation, or per-step shape changes).
+- Whether to package as a `.pt2` (production, shippable) or stick with JIT compile (dev iteration).
+- Which SDPA backend the current PyTorch build is silently dispatching to.
+- Whether your rig has enough VRAM to skip offload (and what it'd cost you if not).
 
-### What SGLang-Diffusion isn't
+### What diffusers won't get you
 
-- **Not a model**. It's an inference engine. The model weights are still WAN's.
-- **Not a training framework**. For training, lab 4.3 (LoRA) and 4.5 (full SFT) use `accelerate` + `bitsandbytes` + `peft` directly. Some kernels overlap; the orchestration is different.
-- **Not the only option** — see the comparison below.
+Five things, all in lab 4.3:
 
-### Comparison of inference frameworks
+1. **Custom kernels beyond what Inductor generates.** SageAttention's INT8 attention, FlashInfer's fused RoPE, the JIT'd QK-norm kernel — these are hand-written CUDA, not Triton fusions. `torch.compile` can't emit them.
+2. **Multi-GPU sequence parallelism.** The transformer's long-sequence attention sharded across N GPUs (Ulysses + Ring) needs explicit communication primitives. `torch.compile` doesn't insert NCCL ops.
+3. **CFG-parallel inference.** Running cond + uncond on separate GPUs concurrently requires a different sampling loop. SGLang ships it as `--enable-cfg-parallel`.
+4. **DiT-specific feature caching** (Cache-DiT). Cross-step feature reuse for diffusion needs an outer scheduler that `torch.compile`'s graph can't see.
+5. **Tensor parallelism for the transformer**. Sharded linear-layer weights across GPUs. SGLang ships it as `--tp-size`.
 
-| Framework | Shape | Best for |
-|---|---|---|
-| **SGLang-Diffusion** (this lab) | full engine: kernel composition + multi-backend attn + Cache-DiT + USP | most thorough open-source production engine; deepest single-GPU and multi-GPU |
-| **diffusers** + `torch.compile` | reference + JIT compiler | hackable baseline; ~1.5–1.8× over plain diffusers |
-| **[OneDiff](https://github.com/siliconflow/onediff)** | graph compiler, drop-in for diffusers | one-line speedup without rewriting kernels |
-| **[xDiT / xfuser](https://github.com/xdit-project/xDiT)** | parallelism library | SP/TP wrappers you layer onto stock diffusers |
-| **[TensorRT-LLM-Diffusion](https://github.com/NVIDIA/TensorRT-LLM)** | AOT graph compiler, NVIDIA-blessed | single-tenant H100/B200 deployments |
-| **[vLLM-Diffusion](https://github.com/vllm-project/vllm)** | continuous-batching engine (LLM heritage) | batch-serving; less mature for video DiT as of mid-2026 |
+If you need any of those, you switch runtimes. That's lab 4.3.
 
-SGLang-Diffusion sits at the upper end of the *full-engine* end of this spectrum. OneDiff is the easy on-ramp; xDiT is what you reach for when you only need parallelism; TensorRT is for "I'll pay setup cost for max single-GPU throughput."
+### Where to go deeper
+
+- [PyTorch `torch.compile` docs](https://pytorch.org/docs/stable/torch.compiler.html) — mode reference, dynamic shapes, debugging tips.
+- [AOTInductor tutorial](https://pytorch.org/tutorials/recipes/torch_export_aoti_python.html) — end-to-end export + load for a real model.
+- [PyTorch SDPA reference](https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html) — backend selection rules.
+- [diffusers' optimization guide](https://huggingface.co/docs/diffusers/optimization/torch2.0) — covers `torch.compile`, SDPA, and offloading from the diffusers angle specifically.
