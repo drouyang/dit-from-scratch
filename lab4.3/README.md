@@ -92,7 +92,12 @@ The benchmark scripts below activate the shared root `.venv` for their orchestra
 
 ## Run the benchmarks
 
-`benchmark_baseline.py` / `benchmark_kernels.py` / `benchmark_parallel.py` each run **one config per invocation** and time **two inference calls back-to-back** — `first call` (includes any sglang warmup: kernel autotune, weight prefetch, optional CUDA Graph capture) and `second call` (warm steady-state). Each invocation reloads the model; accepted as the cost of treating every config as a fresh run. The scripts shell out to `lab4.3/.venv-sglang/bin/sglang generate` for each row — your shell stays in the diffusers venv. Activate it from the repo root first:
+Each script runs **one config per invocation**, lab-4.2-style. They split into two measurement shapes:
+
+- **`benchmark_baseline.py`** keeps the model resident — diffusers stays in-process, sglang runs via `sglang serve` + HTTP — so it reports the full lab-4.2 column set: `model load | first call | second call | speedup (second) | peak VRAM`. The headline diffusers-vs-sglang number.
+- **`benchmark_kernels.py`** and **`benchmark_parallel.py`** each run `sglang generate` as a one-shot subprocess twice (cold + warm), so `wall` includes load. They report a five-column table instead: `config | wall (cold) | wall (warm) | speedup (warm) | peak VRAM` — the warm column is the comparable steady-state number after sglang's cubin disk cache fills. Peak VRAM is polled from `nvidia-smi` during the warm run.
+
+Activate the shared root venv from the repo root first (the scripts shell out to `lab4.3/.venv-sglang/bin/sglang` themselves):
 
 ```bash
 source .venv/bin/activate
@@ -103,9 +108,10 @@ cd lab4.3
 
 ```bash
 python benchmark_baseline.py --prompt "a fluffy red panda eating bamboo on a tree branch"
+python benchmark_baseline.py --skip-diffusers     # if you already have lab 4.2's number
 ```
 
-Compares stock diffusers (lab 4.2's baseline number) against `sglang generate` with default flags. The win comes from FlashAttention-2 (auto-selected), hand-written QKV / SwiGLU / QK-norm fusions, and SGLang's scheduler overhead being lower than `WanPipeline.__call__`.
+Compares stock diffusers (lab 4.2's baseline number) against `sglang serve`'s defaults. The win comes from FlashAttention-2 (auto-selected), hand-written QKV / SwiGLU / QK-norm fusions, and SGLang's scheduler overhead being lower than `WanPipeline.__call__`. If your sglang build uses a non-default HTTP route, override with `SGLANG_ENDPOINT=/your/path python benchmark_baseline.py`.
 
 Expected, single 4090:
 
@@ -117,31 +123,24 @@ Expected, single 4090:
 ### Experiment 1 — attention backend
 
 ```bash
-python benchmark_kernels.py --prompt "..."     # sweeps all backends
+python benchmark_kernels.py --attention-backend fa
+python benchmark_kernels.py --attention-backend _flash_3_hub   # Hopper only
+python benchmark_kernels.py --attention-backend sage
+python benchmark_kernels.py --attention-backend xformers
+python benchmark_kernels.py --attention-backend native
 ```
 
-Underneath, each row of the sweep is one `sglang generate` invocation with a different `--attention-backend`:
-
-```bash
-sglang generate --attention-backend fa            # FlashAttention 2 (default)
-sglang generate --attention-backend _flash_3_hub  # FlashAttention 3 (Hopper-only)
-sglang generate --attention-backend sage          # SageAttention (INT8 Q/K/V)
-sglang generate --attention-backend xformers      # xFormers memory-efficient
-sglang generate --attention-backend native        # PyTorch SDPA (no backend hint)
-```
-
-The dominant kernel in WAN's transformer (and any video DiT) is the attention `Q @ Kᵀ → softmax → · V` for the long video sequence. Lab 4.2's diffusers baseline reaches FA2 via SDPA dispatch; SGLang exposes the choice as a flag.
+Each invocation runs `sglang generate` twice (cold + warm subprocess) with the chosen `--attention-backend`. The dominant kernel in WAN's transformer (and any video DiT) is the attention `Q @ Kᵀ → softmax → · V` for the long video sequence. Lab 4.2's diffusers baseline reaches FA2 via SDPA dispatch; SGLang exposes the choice as a flag.
 
 Expected, single 4090:
 
-| config | model load | first call | second call | speedup (second) | peak VRAM |
-|---|---|---|---|---|---|
-| sglang default (= `fa`) | ~? s | ~? s | ~? s | 1× | ~? GB |
-| `--attention-backend fa` | ~? s | ~? s | ~? s | ~1.00× | ~? GB |
-| `--attention-backend _flash_3_hub` | ~? s | n/a | n/a | n/a (Hopper-only) | n/a |
-| `--attention-backend sage` | ~? s | ~? s | ~? s | ~1.1–1.3× | ~? GB |
-| `--attention-backend xformers` | ~? s | ~? s | ~? s | ~0.95–1.00× | ~? GB |
-| `--attention-backend native` | ~? s | ~? s | ~? s | ~0.95–1.00× | ~? GB |
+| config | wall (cold) | wall (warm) | speedup (warm) | peak VRAM |
+|---|---|---|---|---|
+| `--attention-backend fa` | ~? s | ~? s | 1× | ~? GB |
+| `--attention-backend _flash_3_hub` | n/a | n/a | n/a (Hopper-only) | n/a |
+| `--attention-backend sage` | ~? s | ~? s | ~1.1–1.3× | ~? GB |
+| `--attention-backend xformers` | ~? s | ~? s | ~0.95–1.00× | ~? GB |
+| `--attention-backend native` | ~? s | ~? s | ~0.95–1.00× | ~? GB |
 
 What each one does:
 
@@ -161,9 +160,8 @@ SGLang's value is that it *picks the right kernel per op* — Inductor for the t
 ### Experiment 2 — CFG parallel (2 GPUs)
 
 ```bash
-python benchmark_parallel.py --config cfg-parallel --prompt "..."
-# Underneath:
-sglang generate --enable-cfg-parallel --prompt "..."
+python benchmark_parallel.py                          # 1 GPU baseline
+python benchmark_parallel.py --enable-cfg-parallel    # 2 GPU CFG parallel
 ```
 
 The classifier-free-guidance step needs **two transformer forwards per sampling step** — one with the prompt, one with the negative prompt — and the two are independent until the extrapolation. Put one branch on each of two GPUs and run them concurrently:
@@ -182,10 +180,10 @@ Wall clock per step drops from ~2T to ~T (where T is one forward), at the memory
 
 Expected, 2× 4090:
 
-| config | model load | first call | second call | speedup (second) | peak VRAM (per GPU) |
-|---|---|---|---|---|---|
-| sglang default (1 GPU) | ~? s | ~? s | ~? s | 1× | ~? GB |
-| `--enable-cfg-parallel` (2 GPUs) | ~? s | ~? s | ~? s | ~1.8× | ~? GB (~2× per-GPU footprint) |
+| config | wall (cold) | wall (warm) | speedup (warm) | peak VRAM (per GPU) |
+|---|---|---|---|---|
+| baseline (1 GPU) | ~? s | ~? s | 1× | ~? GB |
+| `--enable-cfg-parallel` (2 GPUs) | ~? s | ~? s | ~1.8× | ~? GB (~2× per-GPU footprint) |
 
 **~1.8× speedup, ~2× memory.**
 
@@ -217,18 +215,12 @@ No `torchrun`, no `torch.distributed`, no NCCL — just two CUDA contexts coordi
 ### Experiment 3 — sequence parallelism (≥2 GPUs)
 
 ```bash
-python benchmark_parallel.py --config ulysses-4 --prompt "..."
-python benchmark_parallel.py --config ring-4    --prompt "..."
-python benchmark_parallel.py --config usp-2x2   --prompt "..."
+python benchmark_parallel.py --ulysses-degree 4 --ring-degree 1    # pure Ulysses, 4 GPU
+python benchmark_parallel.py --ulysses-degree 1 --ring-degree 4    # pure Ring,    4 GPU
+python benchmark_parallel.py --ulysses-degree 2 --ring-degree 2    # USP 2×2,      4 GPU
 ```
 
-Underneath:
-
-```bash
-sglang generate --sp-degree 4 --ulysses-degree 4 --ring-degree 1   # pure Ulysses
-sglang generate --sp-degree 4 --ulysses-degree 1 --ring-degree 4   # pure Ring
-sglang generate --sp-degree 4 --ulysses-degree 2 --ring-degree 2   # USP hybrid
-```
+The script derives `--sp-degree = ulysses × ring` and passes the three flags through to `sglang generate`.
 
 Why video DiT specifically needs sequence parallelism: at 81 frames × 720p, the patchified token count is millions. The attention `Q @ Kᵀ` matrix at that length doesn't fit a single GPU's memory regardless of any other optimization. Image DiT hits ~16k tokens at most and never needs sequence sharding; video forces it.
 
@@ -236,12 +228,12 @@ Lab 4.1's WAN 2.1 T2V-1.3B at 832×480 × 49 frames runs fine on one GPU. The be
 
 Expected, 4× 4090:
 
-| config | model load | first call | second call | speedup (second) | peak VRAM (per GPU) |
-|---|---|---|---|---|---|
-| sglang default (1 GPU) | ~? s | ~? s | ~? s | 1× | ~? GB |
-| Ulysses-4 (`--ulysses-degree 4 --ring-degree 1`) | ~? s | ~? s | ~? s | ~? × | ~? GB |
-| Ring-4 (`--ulysses-degree 1 --ring-degree 4`) | ~? s | ~? s | ~? s | ~? × | ~? GB |
-| USP 2×2 (`--ulysses-degree 2 --ring-degree 2`) | ~? s | ~? s | ~? s | ~? × | ~? GB |
+| config | wall (cold) | wall (warm) | speedup (warm) | peak VRAM (per GPU) |
+|---|---|---|---|---|
+| baseline (1 GPU) | ~? s | ~? s | 1× | ~? GB |
+| Ulysses-4 (`--ulysses-degree 4 --ring-degree 1`) | ~? s | ~? s | ~? × | ~? GB |
+| Ring-4 (`--ulysses-degree 1 --ring-degree 4`) | ~? s | ~? s | ~? × | ~? GB |
+| USP 2×2 (`--ulysses-degree 2 --ring-degree 2`) | ~? s | ~? s | ~? × | ~? GB |
 
 At this scale (1.3B model, 480p video, 4× 4090 without NVLink), all-to-all bandwidth is PCIe-limited so **Ring tends to win over Ulysses**. At production scales (14B + 720p × 81 frames on NVLinked H100s), **USP hybrid wins**, and it's the difference between "fits" and "doesn't fit." All configurations should produce **identical output** for the same seed (parallelism is mathematically equivalent to single-GPU).
 
@@ -311,19 +303,17 @@ Tuning rule of thumb: **Ulysses degree should match NVLink topology** (NVLink-co
 ### Experiment 4 — tensor parallelism (2 GPUs)
 
 ```bash
-python benchmark_parallel.py --config tp-2 --prompt "..."
-# Underneath:
-sglang generate --tp-size 2 --prompt "..."
+python benchmark_parallel.py --tp-size 2
 ```
 
 `--tp-size N` shards the transformer's linear-layer weights across N GPUs. Useful when the model itself doesn't fit on one card — Wan-2.2 14B at bf16 is ~28 GB and won't fit on a single 24 GB 4090, but `--tp-size 2` cleanly halves the weight memory.
 
 Expected, 2× 4090:
 
-| config | model load | first call | second call | speedup (second) | peak VRAM (per GPU) |
-|---|---|---|---|---|---|
-| sglang default (1 GPU) | ~? s | ~? s | ~? s | 1× | ~? GB |
-| `--tp-size 2` | ~? s | ~? s | ~? s | ~0.7–0.9× | ~? GB (~½ of baseline) |
+| config | wall (cold) | wall (warm) | speedup (warm) | peak VRAM (per GPU) |
+|---|---|---|---|---|
+| baseline (1 GPU) | ~? s | ~? s | 1× | ~? GB |
+| `--tp-size 2` | ~? s | ~? s | ~0.7–0.9× | ~? GB (~½ of baseline) |
 
 TP introduces per-layer all-reduces (after each split linear) that don't overlap with compute as cleanly as sequence parallelism's communication. For models that *do* fit on one GPU, TP costs throughput; sequence parallelism is the right tool there. For models that don't fit, TP is necessary.
 
@@ -333,9 +323,9 @@ For Wan-2.1 T2V-1.3B (this lab's model) TP isn't needed — it fits comfortably 
 
 | File | What it is |
 | --- | --- |
-| `benchmark_baseline.py` | Compares stock diffusers vs `sglang generate` with default flags. ~3× win on a single GPU expected. |
-| `benchmark_kernels.py` | A/B's the attention backend on the same prompt+seed: `fa` / `_flash_3_hub` / `sage` / `xformers` / `native`. |
-| `benchmark_parallel.py` | A/B's parallelism configurations: CFG-parallel, Ulysses, Ring, USP hybrid, tensor-parallel. Auto-skips configs needing more GPUs than available. |
+| `benchmark_baseline.py` | Diffusers (in-process) vs `sglang serve` (HTTP). Reports full `load / first / second / speedup / peak VRAM` table. |
+| `benchmark_kernels.py` | One `--attention-backend` per invocation; runs `sglang generate` cold + warm. Reports `cold / warm / peak VRAM`. |
+| `benchmark_parallel.py` | One parallelism config per invocation via semantic flags (`--enable-cfg-parallel`, `--ulysses-degree`, `--ring-degree`, `--tp-size`); runs `sglang generate` cold + warm. |
 | `requirements.txt` | Tiny — just what the orchestrating scripts need; sglang itself lives in `.venv-sglang/`. |
 
 ## Discussion
