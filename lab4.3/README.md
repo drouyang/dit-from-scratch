@@ -92,80 +92,79 @@ The benchmark scripts below activate the shared root `.venv` for their orchestra
 
 ## Run the benchmarks
 
-Three scripts, three categories:
+`benchmark_baseline.py` / `benchmark_kernels.py` / `benchmark_parallel.py` each run **one config per invocation** and time **two inference calls back-to-back** — `first call` (includes any sglang warmup: kernel autotune, weight prefetch, optional CUDA Graph capture) and `second call` (warm steady-state). Each invocation reloads the model; accepted as the cost of treating every config as a fresh run. The scripts shell out to `lab4.3/.venv-sglang/bin/sglang generate` for each row — your shell stays in the diffusers venv. Activate it from the repo root first:
+
+```bash
+source .venv/bin/activate
+cd lab4.3
+```
 
 ### Baseline
 
 ```bash
-source .venv/bin/activate    # from repo root
-cd lab4.3
 python benchmark_baseline.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 ```
 
-Compares stock diffusers (from lab 4.2's baseline) against `sglang generate` with default flags. Expected: ~2.5–3× over stock diffusers on a single GPU. The win comes from FlashAttention-2 (auto-selected), hand-written QKV / SwiGLU / QK-norm fusions, and SGLang's own scheduler overhead being lower than `WanPipeline.__call__`.
+Compares stock diffusers (lab 4.2's baseline number) against `sglang generate` with default flags. The win comes from FlashAttention-2 (auto-selected), hand-written QKV / SwiGLU / QK-norm fusions, and SGLang's scheduler overhead being lower than `WanPipeline.__call__`.
 
-### Kernel sweep
+Expected, single 4090:
 
-```bash
-python benchmark_kernels.py --prompt "..."
-```
+| config | model load | first call | second call | speedup (second) | peak VRAM |
+|---|---|---|---|---|---|
+| diffusers baseline (lab 4.2) | 5.8 s | 77 s | 77 s | 1× | 20.5 GB |
+| sglang default | ~? s | ~? s | ~? s | ~2.5–3× | ~? GB |
 
-Runs the same prompt + seed against each attention backend SGLang supports — `fa` (FlashAttention 2), `_flash_3_hub` (FlashAttention 3, Hopper-only), `sage` (SageAttention INT8), `xformers`, `native` (PyTorch SDPA). Reports wall clock + peak VRAM per backend.
-
-What to expect:
-
-- **`fa`** (FA2) is the default. Strong baseline; works everywhere.
-- **`_flash_3_hub`** (FA3) wins on H100 by ~1.2–1.4× over FA2 (async TMA + WGMMA). Falls back to FA2 on non-Hopper GPUs.
-- **`sage`** (SageAttention) cuts attention FLOPs ~2× via INT8 Q/K/V. Wall-clock win is smaller (~1.1–1.3×) because attention isn't the whole forward. **Output is not bit-identical** to FA — quality drop is typically <1%, but check visually if it matters.
-- **`xformers`** and **`native`** are mostly interesting as sanity checks — they should land within ~5% of `fa`.
-
-### Parallelism sweep (≥2 GPUs)
+### Experiment 1 — attention backend
 
 ```bash
-python benchmark_parallel.py --prompt "..."
+python benchmark_kernels.py --prompt "..."     # sweeps all backends
 ```
 
-Runs the same prompt + seed across multiple parallelism configurations, auto-skipping any that need more GPUs than `nvidia-smi` reports. Configurations:
-
-- **1 GPU baseline** — no parallelism (matches `benchmark_baseline.py`).
-- **CFG parallel (2 GPUs)** — `--enable-cfg-parallel`. Cond + uncond on separate cards.
-- **Ulysses (N GPUs)** — `--sp-degree N --ulysses-degree N --ring-degree 1`. Head-shard via all-to-all.
-- **Ring (N GPUs)** — `--sp-degree N --ulysses-degree 1 --ring-degree N`. Sequence-shard via streaming K/V.
-- **USP hybrid** (4+ GPUs) — `--sp-degree 4 --ulysses-degree 2 --ring-degree 2`. Both schemes composed.
-- **Tensor parallel (2+ GPUs)** — `--tp-size N`. Sharded linear weights.
-
-All configurations should produce **identical output** for the same seed (parallelism is mathematically equivalent to single-GPU). Differences are in wall clock and per-GPU peak memory.
-
-## Deep dive: kernel sweep
-
-### Attention backends
-
-The dominant kernel in WAN's transformer (and any video DiT) is the attention `Q @ Kᵀ → softmax → · V` for the long video sequence. Lab 4.2's diffusers baseline gets FlashAttention 2 via SDPA dispatch; SGLang exposes the choice as a flag:
+Underneath, each row of the sweep is one `sglang generate` invocation with a different `--attention-backend`:
 
 ```bash
 sglang generate --attention-backend fa            # FlashAttention 2 (default)
-sglang generate --attention-backend _flash_3_hub  # FlashAttention 3 (H100/Hopper async)
+sglang generate --attention-backend _flash_3_hub  # FlashAttention 3 (Hopper-only)
 sglang generate --attention-backend sage          # SageAttention (INT8 Q/K/V)
 sglang generate --attention-backend xformers      # xFormers memory-efficient
 sglang generate --attention-backend native        # PyTorch SDPA (no backend hint)
 ```
 
-What each one does, briefly:
+The dominant kernel in WAN's transformer (and any video DiT) is the attention `Q @ Kᵀ → softmax → · V` for the long video sequence. Lab 4.2's diffusers baseline reaches FA2 via SDPA dispatch; SGLang exposes the choice as a flag.
 
-- **FA2** — the standard tiled-softmax kernel. CUDA / SM80+. Same kernel SDPA dispatches to by default in PyTorch.
-- **FA3** — Hopper-specific rewrite. Uses async TMA (Tensor Memory Accelerator) for loads and WGMMA for matmul, overlapping memcpy and compute via warp specialization. Strict speedup over FA2 on H100, no-op-or-worse on older GPUs.
-- **SageAttention** — quantizes Q/K/V to INT8 before the matmul. ~2× FLOPs reduction in the attention step. The math is approximate; quality drop is small (<1% on standard benchmarks) but non-zero. Worth checking visually for your specific prompts before committing.
+Expected, single 4090:
+
+| config | model load | first call | second call | speedup (second) | peak VRAM |
+|---|---|---|---|---|---|
+| sglang default (= `fa`) | ~? s | ~? s | ~? s | 1× | ~? GB |
+| `--attention-backend fa` | ~? s | ~? s | ~? s | ~1.00× | ~? GB |
+| `--attention-backend _flash_3_hub` | ~? s | n/a | n/a | n/a (Hopper-only) | n/a |
+| `--attention-backend sage` | ~? s | ~? s | ~? s | ~1.1–1.3× | ~? GB |
+| `--attention-backend xformers` | ~? s | ~? s | ~? s | ~0.95–1.00× | ~? GB |
+| `--attention-backend native` | ~? s | ~? s | ~? s | ~0.95–1.00× | ~? GB |
+
+What each one does:
+
+- **FA2 (`fa`)** — the standard tiled-softmax kernel. CUDA / SM80+. Same kernel SDPA dispatches to by default in PyTorch.
+- **FA3 (`_flash_3_hub`)** — Hopper-specific rewrite. Async TMA (Tensor Memory Accelerator) for loads + WGMMA for matmul, overlapping memcpy and compute via warp specialization. Strict speedup over FA2 on H100; no-op-or-worse on older GPUs. The `_hub` suffix means SGLang pulls a prebuilt FA3 binary from a HuggingFace cubin hub — don't try to build FA3 from source.
+- **SageAttention (`sage`)** — quantizes Q/K/V to INT8 before the matmul. ~2× FLOPs reduction in the attention step. Wall-clock win is smaller (~1.1–1.3×) because attention isn't the whole forward. **Output is not bit-identical to FA** — quality drop is typically <1% on standard benchmarks, but check visually for your specific prompts before committing.
 - **xFormers / native** — alternative implementations, included for compatibility / debugging. Usually within ±5% of FA2 wall clock.
 
-The reason this matters as a *kernel* benchmark and not just an option-list dump: attention dominates the transformer's wall clock at video sequence lengths (~30–50% of forward time at 49 frames × 832×480). A 1.4× attention speedup is ~1.15× end-to-end. Not enormous, but adds to the other levers.
+Attention dominates the transformer's wall clock at video sequence lengths (~30–50% of forward time at 49 frames × 832×480). A 1.4× attention speedup is ~1.15× end-to-end. Not enormous, but adds to the other levers.
 
-### Why diffusers + `torch.compile` can't reach this
+#### Deep dive: why diffusers + `torch.compile` can't reach this
 
 `torch.compile` uses Inductor + Triton. Its kernels are *Triton-generated*, not hand-tuned C++/CUDA. For most ops (linears, norms, elementwise) the generated kernels are near-optimal. For attention specifically, the hand-tuned FA2/FA3 kernels beat Inductor by a non-trivial margin, and SageAttention's INT8 path isn't reachable from Triton at all.
 
 SGLang's value is that it *picks the right kernel per op* — Inductor for the things Inductor is good at, FlashAttention / SageAttention / FlashInfer for the things they're good at — and orchestrates them in one inference pipeline.
 
-## Deep dive: CFG parallel (2 GPUs)
+### Experiment 2 — CFG parallel (2 GPUs)
+
+```bash
+python benchmark_parallel.py --config cfg-parallel --prompt "..."
+# Underneath:
+sglang generate --enable-cfg-parallel --prompt "..."
+```
 
 The classifier-free-guidance step needs **two transformer forwards per sampling step** — one with the prompt, one with the negative prompt — and the two are independent until the extrapolation. Put one branch on each of two GPUs and run them concurrently:
 
@@ -179,9 +178,18 @@ single-GPU CFG (serial):                  CFG parallel (concurrent):
    v_uncond + s·(v_cond − v_uncond)             gather → v_uncond + s·(v_cond − v_uncond)
 ```
 
-Wall clock per step drops from ~2T to ~T (where T is one forward), at the memory cost of a second transformer copy. **~1.8× speedup, ~2× memory.**
+Wall clock per step drops from ~2T to ~T (where T is one forward), at the memory cost of a second transformer copy.
 
-### What `--enable-cfg-parallel` does internally
+Expected, 2× 4090:
+
+| config | model load | first call | second call | speedup (second) | peak VRAM (per GPU) |
+|---|---|---|---|---|---|
+| sglang default (1 GPU) | ~? s | ~? s | ~? s | 1× | ~? GB |
+| `--enable-cfg-parallel` (2 GPUs) | ~? s | ~? s | ~? s | ~1.8× | ~? GB (~2× per-GPU footprint) |
+
+**~1.8× speedup, ~2× memory.**
+
+#### Deep dive: what `--enable-cfg-parallel` does internally
 
 The pattern in plain PyTorch — what SGLang's runtime composes around your prompt and the model:
 
@@ -202,17 +210,42 @@ The two `transformer_*(...)` calls dispatch to different CUDA streams on differe
 
 No `torchrun`, no `torch.distributed`, no NCCL — just two CUDA contexts coordinated through PyTorch's stream model. SGLang's `--enable-cfg-parallel` adds production touches (text encoder offload after encoding, error handling when the two GPUs go out of sync, composability with USP / TP).
 
-### Why this isn't in diffusers
+#### Deep dive: why this isn't in diffusers
 
 `WanPipeline.__call__` is structured as one sampling loop calling `pipe.transformer` twice per step. CFG-parallel needs a different sampling loop that dispatches the two calls to separate devices — not a flag, a rewrite. Lab 4.2's `torch.compile(reduce-overhead)` pitfall is the related issue: CUDA Graphs alias the two consecutive calls' output buffers. SGLang's runtime owns the sampling loop, so it can structure it correctly.
 
-## Deep dive: sequence parallelism (USP = Ring + Ulysses)
+### Experiment 3 — sequence parallelism (≥2 GPUs)
+
+```bash
+python benchmark_parallel.py --config ulysses-4 --prompt "..."
+python benchmark_parallel.py --config ring-4    --prompt "..."
+python benchmark_parallel.py --config usp-2x2   --prompt "..."
+```
+
+Underneath:
+
+```bash
+sglang generate --sp-degree 4 --ulysses-degree 4 --ring-degree 1   # pure Ulysses
+sglang generate --sp-degree 4 --ulysses-degree 1 --ring-degree 4   # pure Ring
+sglang generate --sp-degree 4 --ulysses-degree 2 --ring-degree 2   # USP hybrid
+```
 
 Why video DiT specifically needs sequence parallelism: at 81 frames × 720p, the patchified token count is millions. The attention `Q @ Kᵀ` matrix at that length doesn't fit a single GPU's memory regardless of any other optimization. Image DiT hits ~16k tokens at most and never needs sequence sharding; video forces it.
 
-Lab 4.1's WAN 2.1 T2V-1.3B at 832×480 × 49 frames runs fine on one GPU. The exercises below demonstrate the *technique* at this smaller scale; production WAN 2.2 14B at 1280×720 × 81 frames is where SP becomes mandatory rather than nice-to-have.
+Lab 4.1's WAN 2.1 T2V-1.3B at 832×480 × 49 frames runs fine on one GPU. The benchmarks below demonstrate the *technique* at this smaller scale; production WAN 2.2 14B at 1280×720 × 81 frames is where SP becomes mandatory rather than nice-to-have.
 
-### Ring Attention — shard sequence, stream K/V
+Expected, 4× 4090:
+
+| config | model load | first call | second call | speedup (second) | peak VRAM (per GPU) |
+|---|---|---|---|---|---|
+| sglang default (1 GPU) | ~? s | ~? s | ~? s | 1× | ~? GB |
+| Ulysses-4 (`--ulysses-degree 4 --ring-degree 1`) | ~? s | ~? s | ~? s | ~? × | ~? GB |
+| Ring-4 (`--ulysses-degree 1 --ring-degree 4`) | ~? s | ~? s | ~? s | ~? × | ~? GB |
+| USP 2×2 (`--ulysses-degree 2 --ring-degree 2`) | ~? s | ~? s | ~? s | ~? × | ~? GB |
+
+At this scale (1.3B model, 480p video, 4× 4090 without NVLink), all-to-all bandwidth is PCIe-limited so **Ring tends to win over Ulysses**. At production scales (14B + 720p × 81 frames on NVLinked H100s), **USP hybrid wins**, and it's the difference between "fits" and "doesn't fit." All configurations should produce **identical output** for the same seed (parallelism is mathematically equivalent to single-GPU).
+
+#### Deep dive: Ring Attention — shard sequence, stream K/V
 
 Each of N GPUs holds 1/N of the sequence's `Q`, `K`, `V`. To compute attention, every GPU needs to see every other GPU's K/V slice. Ring Attention does this by *streaming* K/V chunks around the GPUs:
 
@@ -237,7 +270,7 @@ The softmax is updated using the **same online-softmax trick FlashAttention uses
 
 **Communication overlaps with compute** — while GPU `i` computes attention with the current K/V chunk, the next chunk is in-flight from GPU `i+1`. Bandwidth-efficient; latency-tolerant; favors inter-node IB-bottlenecked setups.
 
-### Ulysses Attention — shard heads, all-to-all
+#### Deep dive: Ulysses Attention — shard heads, all-to-all
 
 Same goal, totally different communication pattern:
 
@@ -256,7 +289,7 @@ Initial layout: sequence-sharded
 
 Communication: **2× all-to-all per attention layer**. Lower latency than Ring (`2` rounds vs `N` rounds), but consumes more total bandwidth at large `N`. Favors NVLink-rich intra-node setups (~900 GB/s makes all-to-all cheap).
 
-### USP — combine both
+#### Deep dive: USP — combine both
 
 xDiT's contribution: shard the sequence in *two* dimensions. Use Ring across many GPUs (good bandwidth utilization) and Ulysses *within* a small Ring group (low latency for the inner step).
 
@@ -269,41 +302,32 @@ xDiT's contribution: shard the sequence in *two* dimensions. Use Ring across man
 
 Tuning rule of thumb: **Ulysses degree should match NVLink topology** (NVLink-connected pairs do the all-to-all efficiently); **Ring degree spans across NVLink boundaries** (higher latency tolerance there).
 
-### Diffusion-specific complications
+#### Deep dive: diffusion-specific complications
 
 1. **CFG batching.** Conditional and unconditional forwards run as one `(2·B, ...)` batch. Sequence parallelism has to be CFG-aware so the all-to-all doesn't shuffle the conditional samples into the unconditional ones.
 2. **3D RoPE positions.** Sharded sequences need consistent `(t, h, w)` indices per token — each shard must know which slice of the global position grid it owns. xDiT handles this; if you write your own SP, it's the bug to watch for.
 3. **Cross-attention K/V are tiny** (77 text tokens × hidden). **Don't** sequence-shard them — replicate per GPU. They're cheap.
 
-### Multi-GPU exercise (4× 4090 default)
+### Experiment 4 — tensor parallelism (2 GPUs)
 
 ```bash
-# Single GPU baseline:
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --sp-degree 1
-
-# Pure Ulysses (all-to-all only), 4 GPUs:
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --sp-degree 4 --ulysses-degree 4 --ring-degree 1
-
-# Pure Ring (streaming K/V only), 4 GPUs:
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --sp-degree 4 --ulysses-degree 1 --ring-degree 4
-
-# USP hybrid (2-way Ulysses × 2-way Ring), 4 GPUs:
-sglang generate --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --prompt "..." \
-    --sp-degree 4 --ulysses-degree 2 --ring-degree 2
+python benchmark_parallel.py --config tp-2 --prompt "..."
+# Underneath:
+sglang generate --tp-size 2 --prompt "..."
 ```
 
-At this scale (1.3B model, 480p video, 4× 4090 without NVLink), all-to-all bandwidth is PCIe-limited so **Ring tends to win over Ulysses**. At production scales (14B + 720p × 81 frames on NVLinked H100s), **USP hybrid wins**, and it's the difference between "fits" and "doesn't fit."
+`--tp-size N` shards the transformer's linear-layer weights across N GPUs. Useful when the model itself doesn't fit on one card — Wan-2.2 14B at bf16 is ~28 GB and won't fit on a single 24 GB 4090, but `--tp-size 2` cleanly halves the weight memory.
 
-## Tensor parallelism (briefly)
+Expected, 2× 4090:
 
-`--tp-size N` shards the transformer's linear-layer weights across N GPUs. Useful when the model itself doesn't fit on one card — e.g., Wan-2.2 14B at bf16 is ~28 GB and won't fit on a single 24 GB 4090, but `--tp-size 2` cleanly halves the weight memory.
+| config | model load | first call | second call | speedup (second) | peak VRAM (per GPU) |
+|---|---|---|---|---|---|
+| sglang default (1 GPU) | ~? s | ~? s | ~? s | 1× | ~? GB |
+| `--tp-size 2` | ~? s | ~? s | ~? s | ~0.7–0.9× | ~? GB (~½ of baseline) |
 
-The trade-off: TP introduces per-layer all-reduces (after each split linear) that don't overlap with compute as cleanly as sequence parallelism's communication. For models that *do* fit on one GPU, TP costs throughput; sequence parallelism is the right tool there. For models that don't fit, TP is necessary.
+TP introduces per-layer all-reduces (after each split linear) that don't overlap with compute as cleanly as sequence parallelism's communication. For models that *do* fit on one GPU, TP costs throughput; sequence parallelism is the right tool there. For models that don't fit, TP is necessary.
 
-For Wan-2.1 T2V-1.3B (this lab's model) TP isn't needed — it fits comfortably on a 24 GB card. The script benchmarks `--tp-size 2` for completeness on the curriculum's 4090 quartet; you'd reach for it seriously when running Wan-2.2 14B on smaller cards.
+For Wan-2.1 T2V-1.3B (this lab's model) TP isn't needed — it fits comfortably on a 24 GB card. The benchmark runs `--tp-size 2` here for completeness on the curriculum's 4090 quartet; you'd reach for it seriously when running Wan-2.2 14B on smaller cards.
 
 ## Files
 
