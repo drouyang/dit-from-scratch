@@ -57,10 +57,11 @@ logging.getLogger("diffusers").setLevel(logging.ERROR)
 
 WAN_REPO = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 
-# sglang serve HTTP defaults. Override either via env var if your sglang
-# build uses a different route.
+# sglang serve port. The HTTP route is auto-discovered from /openapi.json
+# after the server is up; override that discovery with SGLANG_ENDPOINT if
+# you know the route name (e.g. SGLANG_ENDPOINT=/generate).
 SGLANG_PORT = int(os.environ.get("SGLANG_PORT", "30000"))
-SGLANG_ENDPOINT = os.environ.get("SGLANG_ENDPOINT", "/v1/videos/generations")
+SGLANG_ENDPOINT = os.environ.get("SGLANG_ENDPOINT")  # None → autodiscover
 
 
 @dataclass
@@ -101,7 +102,7 @@ class VramPoller(threading.Thread):
     """
     def __init__(self, interval_secs: float = 0.5):
         super().__init__(daemon=True)
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self._interval = interval_secs
         self._peak_mib = 0
         self._available = shutil.which("nvidia-smi") is not None
@@ -109,7 +110,7 @@ class VramPoller(threading.Thread):
     def run(self) -> None:
         if not self._available:
             return
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 out = subprocess.run(
                     ["nvidia-smi", "--query-gpu=memory.used",
@@ -122,10 +123,10 @@ class VramPoller(threading.Thread):
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
                     FileNotFoundError, ValueError):
                 pass
-            self._stop.wait(self._interval)
+            self._stop_event.wait(self._interval)
 
     def stop_and_peak_gb(self) -> float:
-        self._stop.set()
+        self._stop_event.set()
         self.join(timeout=5)
         if not self._available or self._peak_mib == 0:
             return float("nan")
@@ -244,6 +245,32 @@ def post_generate(port: int, endpoint: str, payload: dict, timeout_secs: float) 
         return resp.status
 
 
+def discover_endpoint(port: int) -> tuple[str | None, list[str]]:
+    """Hit /openapi.json and find a POST route that looks like a generate endpoint.
+
+    Returns (best_match, all_post_paths). `best_match` is the first POST path
+    whose name contains "generate" or "diffusion"; falls back to the first
+    POST path; None if discovery fails entirely.
+    """
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/openapi.json", timeout=5) as resp:
+            spec = json.loads(resp.read().decode())
+    except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout,
+            json.JSONDecodeError, OSError):
+        return None, []
+
+    post_paths = sorted(
+        path for path, methods in spec.get("paths", {}).items()
+        if isinstance(methods, dict) and "post" in methods
+    )
+    for path in post_paths:
+        low = path.lower()
+        if "generate" in low or "diffusion" in low or "videos" in low:
+            return path, post_paths
+    return (post_paths[0] if post_paths else None), post_paths
+
+
 def run_sglang(args) -> RunResult:
     label = "sglang (defaults)"
     sglang_bin = find_sglang_bin()
@@ -277,6 +304,23 @@ def run_sglang(args) -> RunResult:
         load_secs = time.time() - t0
         print(f"  load:   {fmt_secs(load_secs)}  (sglang serve ready)")
 
+        # Pick the HTTP route: env override > /openapi.json discovery > error.
+        all_post_paths: list[str] = []
+        if SGLANG_ENDPOINT:
+            endpoint = SGLANG_ENDPOINT
+            print(f"  endpoint: {endpoint}  (from SGLANG_ENDPOINT env)")
+        else:
+            endpoint, all_post_paths = discover_endpoint(SGLANG_PORT)
+            if endpoint is None:
+                print("  endpoint discovery failed — no /openapi.json or no POST routes.")
+                print("  Override with: SGLANG_ENDPOINT=/your/path python benchmark_baseline.py")
+                return RunResult(name=label, skipped=True,
+                                 note="no HTTP endpoint discovered")
+            print(f"  endpoint: {endpoint}  (auto-discovered from /openapi.json)")
+            if len(all_post_paths) > 1:
+                others = [p for p in all_post_paths if p != endpoint]
+                print(f"  (other POST paths: {', '.join(others)})")
+
         payload = {
             "prompt": args.prompt,
             "negative_prompt": args.negative_prompt or "",
@@ -290,18 +334,20 @@ def run_sglang(args) -> RunResult:
 
         try:
             t1 = time.time()
-            post_generate(SGLANG_PORT, SGLANG_ENDPOINT, payload, timeout_secs=1800)
+            post_generate(SGLANG_PORT, endpoint, payload, timeout_secs=1800)
             first_secs = time.time() - t1
             print(f"  first:  {fmt_secs(first_secs)}")
 
             t2 = time.time()
-            post_generate(SGLANG_PORT, SGLANG_ENDPOINT, payload, timeout_secs=1800)
+            post_generate(SGLANG_PORT, endpoint, payload, timeout_secs=1800)
             second_secs = time.time() - t2
             print(f"  second: {fmt_secs(second_secs)}")
         except urllib.error.HTTPError as e:
             body = e.read()[:500].decode(errors="replace")
-            print(f"  HTTP {e.code} on {SGLANG_ENDPOINT}: {body}")
-            print(f"  Override the route with: SGLANG_ENDPOINT=/your/path python benchmark_baseline.py")
+            print(f"  HTTP {e.code} on {endpoint}: {body}")
+            if all_post_paths:
+                print(f"  Available POST paths from /openapi.json: {', '.join(all_post_paths)}")
+            print(f"  Override with: SGLANG_ENDPOINT=/your/path python benchmark_baseline.py")
             return RunResult(name=label, skipped=True, note=f"HTTP {e.code}")
         except (urllib.error.URLError, socket.timeout) as e:
             print(f"  request failed: {e}")

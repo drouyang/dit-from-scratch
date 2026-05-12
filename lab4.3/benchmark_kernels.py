@@ -67,7 +67,7 @@ class VramPoller(threading.Thread):
     """Track peak `nvidia-smi --query-gpu=memory.used` across all visible GPUs."""
     def __init__(self, interval_secs: float = 0.5):
         super().__init__(daemon=True)
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self._interval = interval_secs
         self._peak_mib = 0
         self._available = shutil.which("nvidia-smi") is not None
@@ -75,7 +75,7 @@ class VramPoller(threading.Thread):
     def run(self) -> None:
         if not self._available:
             return
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 out = subprocess.run(
                     ["nvidia-smi", "--query-gpu=memory.used",
@@ -88,10 +88,10 @@ class VramPoller(threading.Thread):
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
                     FileNotFoundError, ValueError):
                 pass
-            self._stop.wait(self._interval)
+            self._stop_event.wait(self._interval)
 
     def stop_and_peak_gb(self) -> float:
-        self._stop.set()
+        self._stop_event.set()
         self.join(timeout=5)
         if not self._available or self._peak_mib == 0:
             return float("nan")
