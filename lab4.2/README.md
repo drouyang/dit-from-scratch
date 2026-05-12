@@ -47,7 +47,7 @@ The benchmark below loads Wan-2.1 T2V-1.3B from HuggingFace (~5 GB total: VAE + 
 
 `benchmark.py` runs **one config per invocation** (orthogonal `--compile`, `--aot`, `--sdpa-backend`, `--offload` flags) and times **two inference calls back-to-back** — `first call` (cold; includes JIT compile or AOT load) and `second call` (warm steady-state). The four experiments below each compose multiple invocations into a comparison.
 
-Each invocation reloads the model (~45 s mostly for the VAE / text encoder); accepted as the cost of treating every config as a fresh run. Activate the venv from the repo root first:
+Each invocation reloads the model (~5–10 s, depending on disk cache vs HuggingFace fetch); accepted as the cost of treating every config as a fresh run. Activate the venv from the repo root first:
 
 ```bash
 source .venv/bin/activate
@@ -94,8 +94,6 @@ RuntimeError: accessing tensor output of CUDAGraphs that has been overwritten
 ```
 
 So this experiment uses `max-autotune-no-cudagraphs` instead of `max-autotune`. `default` works for the same reason — no CUDA Graphs in the first place. Three other workarounds (none yet upstream in diffusers): wrap the transformer output in `.clone()`, call `torch.compiler.cudagraph_mark_step_begin()` between cond and uncond forwards, or run cond + uncond on separate GPUs (CFG-parallel, lab 4.3).
-
-What you're measuring: how much Inductor + Triton fusion + autotune (optional) accelerates the *transformer* forward, and how much warmup costs you for that win.
 
 Expected, single 4090:
 
@@ -147,8 +145,6 @@ torch._inductor.aoti_compile_and_package(exported, package_path=args.aot_path)
 loaded = torch._inductor.aoti_load_package(args.aot_path)
 pipe.transformer = _AOTWrapper(loaded, pipe.transformer)  # mimics transformer.__call__
 ```
-
-What you're measuring: AOT's value is in the **first-call** column, not the second. After warmup both paths converge to the same steady state.
 
 Expected, single 4090:
 
@@ -218,7 +214,6 @@ For a long-running single-process server, plain `torch.compile` JIT is fine — 
 ```bash
 python benchmark.py --sdpa-backend flash      # FlashAttention 2 forced
 python benchmark.py --sdpa-backend efficient  # xFormers-style memory-efficient
-python benchmark.py --sdpa-backend cudnn      # cuDNN's fused attention
 ```
 
 Expected, single 4090:
@@ -263,7 +258,7 @@ Expected, single 4090:
 | config | model load | second call | speedup | peak VRAM |
 |---|---|---|---|---|
 | baseline | 5.8 s | 77 s | 1× | 20.5 GB |
-| `--offload model` | 10.8 s | 78 s | 0.99× | 17.0 GB |
+| `--offload model` | 10.8 s | 78 s | 1× | 17.0 GB |
 | `--offload sequential` | 11.0 s | 185 s | 0.42× | 15.0 GB |
 
 **Why model load roughly doubles with either offload helper** (5.8 s → ~11 s). `build_pipeline()` does `WanPipeline.from_pretrained(...).to("cuda")` first, so all components land on GPU. Then `enable_*_cpu_offload()` walks the pipeline and pushes every component back to CPU so the offload-aware execution order can start from a known state — that's a ~13 GB GPU→CPU memcpy that the baseline doesn't pay. On top of that, the helper registers `AlignDevicesHook` forward pre/post hooks on every `nn.Module` (per *submodule* for sequential — the whole transformer tree, not just the top-level components). Bookkeeping, not compute, but adds up. The two modes pay similar setup cost because the dominant chunk is the same GPU→CPU bounce.
@@ -280,27 +275,11 @@ A diffusion pipeline keeps three neural networks loaded on the GPU:
 
 `enable_sequential_cpu_offload()` cycles at a much **finer granularity** — individual submodules (per-block, per-Linear) move on and off GPU on demand. Over a full generation (60 transformer forwards × ~30 blocks each), that's thousands of small PCIe round-trips. Each transfer is fast, but the cumulative overhead dominates: ~107 extra seconds of wall clock for only ~2 GB additional VRAM savings (15.0 vs 17.0 GB). Steep trade-off — useful only when sequential offload is the *only* way the model fits (12 GB consumer card, or running two models concurrently on the same GPU).
 
-## Deep dive: model offloading
-
-For 12 GB / 16 GB consumer cards, the full Wan-2.1-1.3B pipeline (~12 GB at bf16 with VAE + text encoder + transformer all resident) doesn't comfortably fit alongside activations. `diffusers` ships two offload helpers:
-
-```python
-pipe.enable_model_cpu_offload()       # default choice
-pipe.enable_sequential_cpu_offload()  # more aggressive
-```
-
-| Helper | What it does | Latency cost | When to use |
-|---|---|---|---|
-| `enable_model_cpu_offload()` | Moves *whole components* (VAE, text encoder, transformer) to CPU when not actively in use; brings the one in use back to GPU. | ~5–10% per inference call. | Default for tight-VRAM rigs. Almost no quality of life cost. |
-| `enable_sequential_cpu_offload()` | Moves individual *submodules* (per-layer) on and off GPU on demand. | 1.5–3× slower per call. | When even `enable_model_cpu_offload` OOMs. Fits Wan-2.1-1.3B on a 6 GB card. |
-
-`benchmark.py` exposes `--offload model` / `--offload sequential` to A/B these.
-
 ## Files
 
 | File | What it is |
 | --- | --- |
-| `benchmark.py` | Runs the diffusers baseline + `torch.compile(default)` + `torch.compile(max-autotune)` with peak-VRAM tracking, side-by-side comparison, optional `--offload` / `--sdpa-backend` toggles. |
+| `benchmark.py` | One config per invocation. Times two inference calls (cold + warm), reports model-load / first-call / second-call / peak-VRAM. Flags: `--compile`, `--aot`, `--sdpa-backend`, `--offload`. |
 | `requirements.txt` | torch, diffusers, transformers, accelerate, imageio. |
 
 ## Discussion
