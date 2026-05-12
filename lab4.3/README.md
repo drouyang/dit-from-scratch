@@ -23,41 +23,7 @@ Lab 4.2 demonstrated that vanilla PyTorch + `torch.compile` gets you ~1.6–1.9�
 | Sampling-loop caching | No (graph-level only) | DiT-aware feature caching across diffusion steps (Cache-DiT) — ~1.7× alone |
 | Multi-GPU parallelism | None | CFG parallel, sequence parallelism (Ring / Ulysses / USP), tensor parallelism — all configurable via flags |
 
-The pattern: SGLang is the *orchestration runtime*. Most of its wins come from composing third-party libraries (FlashAttention, SageAttention, FlashInfer, Cache-DiT, xfuser) into one inference pipeline. Each is independently togglable; the lab teaches you which knob to turn when.
-
-## The technique map
-
-Every optimization in SGLang-Diffusion comes from somewhere. Most are upstream libraries; SGLang is the layer that picks and composes them.
-
-| Technique | Where it comes from | What it does |
-|---|---|---|
-| **FlashAttention 2/3** | [`Dao-AILab/flash-attention`](https://github.com/Dao-AILab/flash-attention) — external | Tiled softmax over Q@Kᵀ that never materializes the full attention matrix. Core LLM-serving primitive. |
-| **SageAttention 2/3** | [`thu-ml/SageAttention`](https://github.com/thu-ml/SageAttention) — external | Quantized attention (INT8 / FP8 Q/K/V). Cuts attention FLOPs and memory at the cost of <1% quality. |
-| **FlashInfer RoPE / kernels** | [`flashinfer-ai/flashinfer`](https://github.com/flashinfer-ai/flashinfer) — external | Inplace, fused rotary embedding + other custom kernels. Replaces ~5 PyTorch ops with one CUDA kernel. |
-| **Fused QKV** | model-adapter pattern, not a library | One `Linear(hidden, 3·hidden)` + split, instead of three `Linear`s. |
-| **Fused gate+up+SiLU** (SwiGLU) | usually `flashinfer.silu_and_mul` | One kernel for `silu(gate(x)) * up(x)`. |
-| **JIT QK-norm kernel** | in-house Triton / `torch.compile` | Fuses the per-head Q/K RMSNorm that some DiT variants use. |
-| **Custom timestep CUDA kernel** | in-house | Sinusoidal `t` embedding written as one CUDA kernel instead of many tiny PyTorch ops. |
-| **Cache-DiT** | [`vipshop/cache-dit`](https://github.com/vipshop/cache-dit) — external | DiT-specific feature caching: skip recomputing block outputs that haven't changed across diffusion steps. |
-| **Layerwise weight offload** | in-house orchestration | Prefetch layer N+1 onto GPU during layer N's compute. Hides PCIe transfer cost. |
-| **Sequence parallelism** (Ulysses + Ring USP) | [`xfuser` / xDiT](https://github.com/xdit-project/xDiT) — external | Shard the long video sequence across GPUs along the sequence dim. |
-| **Tensor parallelism** | standard | Shard linear-layer weights across GPUs. |
-| **CFG parallel** | in-house | Run cond + uncond forwards on separate GPUs concurrently. |
-
-## Toggle map (the SGLang CLI flags)
-
-What makes this lab teachable: every optimization is independently turn-on-able from the CLI. From the [official CLI docs](https://sgl-project.github.io/diffusion/api/cli.html):
-
-| Optimization | Flag |
-|---|---|
-| Attention backend | `--attention-backend {fa,sage,xformers,native,_flash_3_hub}` |
-| Cache-DiT | `--cache-dit-config <path>` (or `SGLANG_CACHE_DIT_ENABLED=true`) |
-| Layerwise weight offload | `--dit-layerwise-offload true` |
-| CFG parallelism | `--enable-cfg-parallel` |
-| Sequence parallelism | `--sp-degree N`, `--ulysses-degree N`, `--ring-degree N` |
-| Tensor parallelism | `--tp-size N` |
-| VAE memory | `--vae-tiling`, `--vae-slicing` |
-| Text-encoder offload | `--text-encoder-cpu-offload`, `--pin-cpu-memory` |
+The pattern: SGLang is the *orchestration runtime*. Most of its wins come from composing third-party libraries (FlashAttention, SageAttention, FlashInfer, Cache-DiT, xfuser) into one inference pipeline. Each is independently togglable from the [SGLang CLI](https://sgl-project.github.io/diffusion/api/cli.html); the lab teaches you which knob to turn when.
 
 ## Setup
 
