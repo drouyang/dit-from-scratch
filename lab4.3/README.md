@@ -49,21 +49,11 @@ The benchmark scripts below activate the shared root `.venv` for their orchestra
 
 ## Run the benchmarks
 
-Each script runs **one config per invocation**, lab-4.2-style. They split into two measurement shapes:
-
-- **`benchmark_baseline.py`** keeps the model resident — diffusers stays in-process, sglang runs via `sglang serve` + HTTP — so it reports the full lab-4.2 column set: `model load | first call | second call | speedup (second) | peak VRAM`. The headline diffusers-vs-sglang number.
-- **`benchmark_kernels.py`** and **`benchmark_parallel.py`** each run `sglang generate` as a one-shot subprocess twice (cold + warm), so `wall` includes load. They report a five-column table instead: `config | wall (cold) | wall (warm) | speedup (warm) | peak VRAM` — the warm column is the comparable steady-state number after sglang's cubin disk cache fills. Peak VRAM is polled from `nvidia-smi` during the warm run.
-
-Activate the shared root venv from the repo root first (the scripts shell out to `lab4.3/.venv-sglang/bin/sglang` themselves):
-
-```bash
-source .venv/bin/activate
-cd lab4.3
-```
-
 ### Baseline
 
 ```bash
+source .venv/bin/activate    # from repo root
+cd lab4.3
 python benchmark_baseline.py --prompt "a fluffy red panda eating bamboo on a tree branch"
 python benchmark_baseline.py --skip-diffusers     # if you already have lab 4.2's number
 ```
