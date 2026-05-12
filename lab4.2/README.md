@@ -228,9 +228,11 @@ Expected, single 4090:
 | baseline (auto) | 5.8 s | 77 s | 1× | 20.5 GB |
 | `--sdpa-backend flash` | 5.7 s | 77 s | 1.00× | 20.5 GB |
 | `--sdpa-backend efficient` | 5.7 s | 93 s | 0.83× | 20.5 GB |
-| `--sdpa-backend cudnn` | TBD | TBD | ~1.02× | TBD |
+| `--sdpa-backend cudnn` | — | **OOM** | — | — |
 
-On this model, `flash` ties the auto-dispatch baseline (~1.00×) and `efficient` runs ~17% slower — long-sequence attention (832×480 × 49 frames produces a long token sequence) genuinely favors FlashAttention's tiled algorithm over xFormers-style memory-efficient attention. The headline check is that *all backends produce identical output for the same seed* — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
+On this model, `flash` ties the auto-dispatch baseline (~1.00×) and `efficient` runs ~17% slower — long-sequence attention (832×480 × 49 frames produces a long token sequence) genuinely favors FlashAttention's tiled algorithm over xFormers-style memory-efficient attention. **`cudnn` doesn't work on this 4090**: cuDNN's fused-attention kernel is heavily Hopper-tuned (H100, B200), and at WAN's 81k-token sequence length on an Ada Lovelace card it's rejected by SDPA's dispatch check, which falls through to MATH — which then OOMs trying to materialize the full `(B, H, S, S)` attention matrix. cuDNN attention does work on H100, where this experiment would produce a real number.
+
+The headline check is that **all backends that *do* run produce identical output for the same seed** — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
 
 ### Deep dive: SDPA backend selection
 
@@ -248,9 +250,9 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
 | `FLASH_ATTENTION` | FlashAttention 2 (or FA3 on H100 if available). | Default for long sequences. What most production deployments get. |
 | `EFFICIENT_ATTENTION` | xFormers' memory-efficient attention. Different kernel, similar idea. | When FlashAttention is unavailable (older hardware, exotic dtypes) or you suspect a FA-specific bug. |
 | `MATH` | Naive PyTorch `softmax(QKᵀ/√d) · V`. | Debugging only. Slow. |
-| `CUDNN_ATTENTION` | cuDNN's fused attention. | Available in recent PyTorch + cuDNN; sometimes the fastest path on Hopper. |
+| `CUDNN_ATTENTION` | cuDNN's fused attention. | Hopper (H100, B200) — often the fastest path there. **Ada Lovelace (4090) rejects it at WAN's seq_len** and falls back to MATH (which OOMs); skip on consumer GPUs. |
 
-The benchmark accepts `--sdpa-backend` for a quick A/B. For video DiT at production resolutions, `FLASH_ATTENTION` typically wins — long sequences favor FA's tiled algorithm. The spread vs. the others depends on the model and sequence length: on WAN 1.3B @ 832×480 × 49 frames we measure `efficient` at ~0.83× and `cudnn` close to `flash`; the difference is real, not noise. The other interesting thing is verifying that **all backends produce identical output for the same seed** (sequence parallelism / quantized attention break this; SDPA backends don't).
+The benchmark accepts `--sdpa-backend` for a quick A/B. For video DiT at production resolutions, `FLASH_ATTENTION` typically wins — long sequences favor FA's tiled algorithm. The spread vs. the others depends on the model and sequence length: on WAN 1.3B @ 832×480 × 49 frames we measure `efficient` at ~0.83× and `cudnn` rejects with an OOM (because cuDNN's attention is Hopper-tuned, not effective on Ada Lovelace at this seq_len). The other interesting thing is verifying that **all backends that *do* run produce identical output for the same seed** (sequence parallelism / quantized attention break this; SDPA backends don't).
 
 ### Experiment 4 — Offload trade-off
 
