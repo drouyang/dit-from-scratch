@@ -89,19 +89,34 @@ def fmt_mem(bytes_: int) -> str:
 def sdpa_backend(name: str):
     """Force a specific SDPA backend via `torch.nn.attention.sdpa_kernel`.
 
-    `auto` is a no-op (PyTorch picks). Other choices restrict the dispatch.
+    `auto` is a no-op (PyTorch picks). Other choices restrict the dispatch to
+    the requested backend with MATH as a fallback.
+
+    The MATH fallback is required because the Wan-VAE attention runs in fp32
+    (the VAE is loaded fp32 for numerical stability), and FlashAttention 2 /
+    FlashAttention 3 / xFormers don't have fp32 kernels — they only support
+    fp16/bf16. Without MATH in the list, the VAE-decode step at the end of
+    inference raises `RuntimeError: No available kernel. Aborting execution.`
+    sdpa_kernel([requested, MATH]) tries the requested backend first (used
+    by the transformer for all ~30 sampling steps) and falls back to MATH
+    for the handful of fp32 VAE-attention calls. The transformer timing —
+    the part the experiment cares about — still reflects the requested
+    backend.
     """
     if name == "auto":
         yield
         return
     from torch.nn.attention import SDPBackend, sdpa_kernel
-    backend = {
+    primary = {
         "flash":     SDPBackend.FLASH_ATTENTION,
         "efficient": SDPBackend.EFFICIENT_ATTENTION,
         "cudnn":     SDPBackend.CUDNN_ATTENTION,
         "math":      SDPBackend.MATH,
     }[name]
-    with sdpa_kernel(backend):
+    # MATH is already the only choice for "math"; for others, allow it as
+    # fallback so fp32 VAE attention doesn't crash the run.
+    backends = [primary] if name == "math" else [primary, SDPBackend.MATH]
+    with sdpa_kernel(backends):
         yield
 
 
