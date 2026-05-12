@@ -227,10 +227,10 @@ Expected, single 4090:
 |---|---|---|---|---|
 | baseline (auto) | 5.8 s | 77 s | 1× | 20.5 GB |
 | `--sdpa-backend flash` | 5.7 s | 77 s | 1.00× | 20.5 GB |
-| `--sdpa-backend efficient` | TBD | TBD | ~0.98× | TBD |
+| `--sdpa-backend efficient` | 5.7 s | 93 s | 0.83× | 20.5 GB |
 | `--sdpa-backend cudnn` | TBD | TBD | ~1.02× | TBD |
 
-Differences are usually within ±5%. The interesting check is that *all backends produce identical output for the same seed* — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
+On this model, `flash` ties the auto-dispatch baseline (~1.00×) and `efficient` runs ~17% slower — long-sequence attention (832×480 × 49 frames produces a long token sequence) genuinely favors FlashAttention's tiled algorithm over xFormers-style memory-efficient attention. The headline check is that *all backends produce identical output for the same seed* — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
 
 ### Deep dive: SDPA backend selection
 
@@ -250,7 +250,7 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
 | `MATH` | Naive PyTorch `softmax(QKᵀ/√d) · V`. | Debugging only. Slow. |
 | `CUDNN_ATTENTION` | cuDNN's fused attention. | Available in recent PyTorch + cuDNN; sometimes the fastest path on Hopper. |
 
-The benchmark accepts `--sdpa-backend` for a quick A/B; usually `FLASH_ATTENTION` wins for video DiT at production resolutions (long sequences favor FA's tiled algorithm) and the others are within ±5%. The interesting thing isn't the win — it's verifying that **all backends produce identical output for the same seed** (sequence parallelism / quantized attention break this; SDPA backends don't).
+The benchmark accepts `--sdpa-backend` for a quick A/B. For video DiT at production resolutions, `FLASH_ATTENTION` typically wins — long sequences favor FA's tiled algorithm. The spread vs. the others depends on the model and sequence length: on WAN 1.3B @ 832×480 × 49 frames we measure `efficient` at ~0.83× and `cudnn` close to `flash`; the difference is real, not noise. The other interesting thing is verifying that **all backends produce identical output for the same seed** (sequence parallelism / quantized attention break this; SDPA backends don't).
 
 ### Experiment 4 — Offload trade-off
 
@@ -258,17 +258,6 @@ The benchmark accepts `--sdpa-backend` for a quick A/B; usually `FLASH_ATTENTION
 python benchmark.py --offload model           # whole-component CPU offload
 python benchmark.py --offload sequential      # per-submodule CPU offload
 ```
-
-Key API (`benchmark.py:153–156`) — diffusers ships two offload helpers; the CLI flag picks one:
-
-```python
-if args.offload == "model":
-    pipe.enable_model_cpu_offload()       # cycle whole modules (text encoder, transformer, VAE)
-elif args.offload == "sequential":
-    pipe.enable_sequential_cpu_offload()  # cycle individual submodules within each model
-```
-
-What you're measuring: how much **peak VRAM** drops when diffusers' offload helpers move idle components to CPU, and how much wall clock you pay for that drop.
 
 Expected, single 4090:
 
@@ -297,10 +286,6 @@ pipe.enable_sequential_cpu_offload()  # more aggressive
 | `enable_sequential_cpu_offload()` | Moves individual *submodules* (per-layer) on and off GPU on demand. | 1.5–3× slower per call. | When even `enable_model_cpu_offload` OOMs. Fits Wan-2.1-1.3B on a 6 GB card. |
 
 `benchmark.py` exposes `--offload model` / `--offload sequential` to A/B these.
-
-### Why this is a diffusers thing, not a general thing
-
-Both helpers are pipeline-aware: they know which submodules belong to which component and can move them as a unit. SGLang (lab 4.3) has its own offloading flag (`--dit-layerwise-offload`) that does the per-layer version; the pattern is the same, only the runtime differs.
 
 ## Files
 
