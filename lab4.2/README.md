@@ -115,14 +115,14 @@ baseline first call:           uncompiled_gen                  ≈ 77 s
 --compile default second call: compiled_gen                    ≈ 62 s   ← the win
 ```
 
-You pay the compile tax once per process. After that, every call is faster. This is exactly why AOT (Experiment 2) matters for cold-start-sensitive deploys: the compile work moves *before* the process starts (`--aot save` once, ahead of time), so the next process's first call skips it entirely.
+You pay the compile tax once per process. After that, every call is faster.
+
+**Why `max-autotune-no-cudagraphs` doesn't beat `default` here.** Steady-state is essentially identical (62 s vs 62 s), but the first call jumps from 119 s to 229 s — Triton's autotune searches the kernel-parameter space (tile sizes, num warps, etc.) for the matmul + epilogue ops, adding ~170 s of compile time. On bigger DiTs (SD3 2B, FLUX 12B) autotune typically buys ~5–10% steady-state. For WAN 1.3B the hot kernels are *already* picked well by Inductor's defaults — there's nothing for autotune to find. So `max-autotune-no-cudagraphs` is a 3× compile cost for ~0% return on this model. Useful to verify; not useful to ship.
 
 **Why 1.24× is on the low end** (typical for DiTs is 1.5–1.7×). Two plausible reasons:
 
 1. **WAN's transformer is small (1.3B params).** Kernel-launch overhead is already a smaller fraction of total time, so Inductor's fusion has less to save. Bigger transformers (SD3 2B, FLUX 12B) typically see bigger compile wins.
 2. **bf16 + FlashAttention via SDPA is already very efficient.** PyTorch's SDPA dispatcher routes attention to FlashAttention 2 automatically on Ampere+; the matmuls run in bf16 on Tensor Cores. The dominant ops are already well-tuned kernels, so Inductor's fusion is mostly cleaning up the small ops *around* them (norms, residual adds, gates) — not the hot path itself.
-
-**Why `max-autotune-no-cudagraphs` doesn't beat `default` here.** Steady-state is essentially identical (62 s vs 62 s), but the first call jumps from 119 s to 229 s — Triton's autotune searches the kernel-parameter space (tile sizes, num warps, etc.) for the matmul + epilogue ops, adding ~170 s of compile time. On bigger DiTs (SD3 2B, FLUX 12B) autotune typically buys ~5–10% steady-state. For WAN 1.3B the hot kernels are *already* picked well by Inductor's defaults — there's nothing for autotune to find. So `max-autotune-no-cudagraphs` is a 3× compile cost for ~0% return on this model. Useful to verify; not useful to ship.
 
 ### Experiment 2 — AOT cold-start vs JIT
 
