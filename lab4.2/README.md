@@ -162,6 +162,57 @@ The headline: **AOT's first call (62 s) matches its second call (62 s)**, while 
 
 > **Caveat**: AOTInductor's API has moved between PyTorch versions. If `--aot save` fails with an `AttributeError` on `torch._inductor.aoti_compile_and_package`, your PyTorch is newer or older than the script targets — check [PyTorch's AOTI tutorial](https://pytorch.org/tutorials/recipes/torch_export_aoti_python.html) for the current call signature.
 
+### Deep dive: AOT compilation (`torch.export` + AOTInductor)
+
+`torch.compile` is JIT — compile happens *in your process, on first call*. The compiled artifact dies with the process. **AOTInductor** lets you compile *ahead of time* and ship a self-contained `.pt2` binary you can load without paying the JIT cost again.
+
+```python
+import torch
+from diffusers import WanPipeline
+
+pipe = WanPipeline.from_pretrained(...).to("cuda")
+
+# 1) Build example inputs that capture the full input signature of transformer.forward
+example_inputs = (
+    torch.randn(1, 16, 13, 60, 104, dtype=torch.bfloat16, device="cuda"),  # hidden_states
+    torch.tensor([500.0], device="cuda"),                                   # timestep
+    torch.randn(1, 512, 4096, dtype=torch.bfloat16, device="cuda"),         # encoder_hidden_states
+)
+
+# 2) Export → AOT compile → package
+exported = torch.export.export(pipe.transformer, args=example_inputs)
+torch._inductor.aoti_compile_and_package(
+    exported,
+    package_path="wan_transformer.pt2",
+)
+
+# 3) Later (different process, possibly different machine):
+loaded = torch._inductor.aoti_load_package("wan_transformer.pt2")
+output = loaded(*example_inputs)
+```
+
+#### Why production cares
+
+- **No Python overhead at inference.** The packaged binary is self-contained C++. Load it from any wrapper (Python, C++, Triton Inference Server) without paying for `torch.compile`'s JIT warmup or its Python control flow.
+- **Shippable.** Build once on a beefy machine, deploy to any GPU with a compatible CUDA version. Frees the inference host from needing the full PyTorch + compiler toolchain.
+- **Composable.** AOT-compile only the hot transformer; wrap it in a regular Python sampling loop. The loop stays hackable, the inner forward is "compiled C++."
+
+#### Caveats
+
+- **API is still evolving.** `torch.export` and AOTInductor are stable enough for production use (PyTorch 2.4+) but the exact function names (`torch._inductor.aoti_compile_and_package`, `torch._inductor.aoti_load_package`) may move; check the current PyTorch docs.
+- **Dynamic shapes are harder.** AOT export with truly dynamic shapes is doable via `dynamic_shapes` in `torch.export.export(...)`, but most production deployments fix the shape (e.g., one `.pt2` per resolution preset) and accept the storage cost.
+- **No backward.** AOTInductor is forward-only. Training keeps using `torch.compile` JIT.
+
+#### When AOT beats JIT
+
+AOT shines when warmup time matters or repeated cold starts hurt:
+
+- Serverless / autoscaling deploys where each container restart would re-pay JIT compile.
+- Embedded / mobile-adjacent deployments where Python isn't desired.
+- Multi-model orchestrators where you load and unload models dynamically.
+
+For a long-running single-process server, plain `torch.compile` JIT is fine — you pay the warmup once.
+
 ### Experiment 3 — SDPA backend
 
 ```bash
@@ -197,6 +248,26 @@ Expected, single 4090:
 
 Differences are usually within ±5%. The interesting check is that *all backends produce identical output for the same seed* — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
 
+### Deep dive: SDPA backend selection
+
+`F.scaled_dot_product_attention` (used by `WanTransformer3DModel`'s attention internally) picks a backend automatically. You can force a specific one:
+
+```python
+from torch.nn.attention import SDPBackend, sdpa_kernel
+
+with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+    output = pipe(prompt=...)
+```
+
+| Backend | What it is | When to use |
+|---|---|---|
+| `FLASH_ATTENTION` | FlashAttention 2 (or FA3 on H100 if available). | Default for long sequences. What most production deployments get. |
+| `EFFICIENT_ATTENTION` | xFormers' memory-efficient attention. Different kernel, similar idea. | When FlashAttention is unavailable (older hardware, exotic dtypes) or you suspect a FA-specific bug. |
+| `MATH` | Naive PyTorch `softmax(QKᵀ/√d) · V`. | Debugging only. Slow. |
+| `CUDNN_ATTENTION` | cuDNN's fused attention. | Available in recent PyTorch + cuDNN; sometimes the fastest path on Hopper. |
+
+The benchmark accepts `--sdpa-backend` for a quick A/B; usually `FLASH_ATTENTION` wins for video DiT at production resolutions (long sequences favor FA's tiled algorithm) and the others are within ±5%. The interesting thing isn't the win — it's verifying that **all backends produce identical output for the same seed** (sequence parallelism / quantized attention break this; SDPA backends don't).
+
 ### Experiment 4 — Offload trade-off
 
 ```bash
@@ -226,77 +297,6 @@ Expected, single 4090:
 **Why `--offload model` is essentially free here** (+1% latency vs the ~10–15% you'd expect). The benchmark already does its own manual text-encoder offload (`pipe.text_encoder.to("cpu")` after `encode_prompt`) to avoid an OOM during torch.compile. That's the *expensive* offload — umT5-XXL is ~11 GB. By the time `--offload model` engages, the only remaining cycle work is the transformer ↔ VAE handoff, which is tiny (~3 GB savings, sub-second wall cost). So our measured "+1% slowdown / −17% VRAM" reflects baseline-minus-text-encoder-offload, not raw `enable_model_cpu_offload()`. The trade-off shape still holds — just shifted: each *additional* level of offload costs roughly an order of magnitude more in latency for the next chunk of VRAM. The `--offload sequential` row (per-submodule offload) is where the steep slowdown kicks in.
 
 On a 4090 you don't need offload to fit (baseline is 20.5 GB on a 24 GB card), but the experiment is how you'd plan a deployment to a 12 GB card, or run two models concurrently on the same GPU.
-
-## Deep dive: AOT compilation (`torch.export` + AOTInductor)
-
-`torch.compile` is JIT — compile happens *in your process, on first call*. The compiled artifact dies with the process. **AOTInductor** lets you compile *ahead of time* and ship a self-contained `.pt2` binary you can load without paying the JIT cost again.
-
-```python
-import torch
-from diffusers import WanPipeline
-
-pipe = WanPipeline.from_pretrained(...).to("cuda")
-
-# 1) Build example inputs that capture the full input signature of transformer.forward
-example_inputs = (
-    torch.randn(1, 16, 13, 60, 104, dtype=torch.bfloat16, device="cuda"),  # hidden_states
-    torch.tensor([500.0], device="cuda"),                                   # timestep
-    torch.randn(1, 512, 4096, dtype=torch.bfloat16, device="cuda"),         # encoder_hidden_states
-)
-
-# 2) Export → AOT compile → package
-exported = torch.export.export(pipe.transformer, args=example_inputs)
-torch._inductor.aoti_compile_and_package(
-    exported,
-    package_path="wan_transformer.pt2",
-)
-
-# 3) Later (different process, possibly different machine):
-loaded = torch._inductor.aoti_load_package("wan_transformer.pt2")
-output = loaded(*example_inputs)
-```
-
-### Why production cares
-
-- **No Python overhead at inference.** The packaged binary is self-contained C++. Load it from any wrapper (Python, C++, Triton Inference Server) without paying for `torch.compile`'s JIT warmup or its Python control flow.
-- **Shippable.** Build once on a beefy machine, deploy to any GPU with a compatible CUDA version. Frees the inference host from needing the full PyTorch + compiler toolchain.
-- **Composable.** AOT-compile only the hot transformer; wrap it in a regular Python sampling loop. The loop stays hackable, the inner forward is "compiled C++."
-
-### Caveats
-
-- **API is still evolving.** `torch.export` and AOTInductor are stable enough for production use (PyTorch 2.4+) but the exact function names (`torch._inductor.aoti_compile_and_package`, `torch._inductor.aoti_load_package`) may move; check the current PyTorch docs.
-- **Dynamic shapes are harder.** AOT export with truly dynamic shapes is doable via `dynamic_shapes` in `torch.export.export(...)`, but most production deployments fix the shape (e.g., one `.pt2` per resolution preset) and accept the storage cost.
-- **No backward.** AOTInductor is forward-only. Training keeps using `torch.compile` JIT.
-
-### When AOT beats JIT
-
-AOT shines when warmup time matters or repeated cold starts hurt:
-
-- Serverless / autoscaling deploys where each container restart would re-pay JIT compile.
-- Embedded / mobile-adjacent deployments where Python isn't desired.
-- Multi-model orchestrators where you load and unload models dynamically.
-
-For a long-running single-process server, plain `torch.compile` JIT is fine — you pay the warmup once.
-
-## Deep dive: SDPA backend selection
-
-`F.scaled_dot_product_attention` (used by `WanTransformer3DModel`'s attention internally) picks a backend automatically. You can force a specific one:
-
-```python
-from torch.nn.attention import SDPBackend, sdpa_kernel
-
-with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-    output = pipe(prompt=...)
-```
-
-| Backend | What it is | When to use |
-|---|---|---|
-| `FLASH_ATTENTION` | FlashAttention 2 (or FA3 on H100 if available). | Default for long sequences. What most production deployments get. |
-| `EFFICIENT_ATTENTION` | xFormers' memory-efficient attention. Different kernel, similar idea. | When FlashAttention is unavailable (older hardware, exotic dtypes) or you suspect a FA-specific bug. |
-| `MATH` | Naive PyTorch `softmax(QKᵀ/√d) · V`. | Debugging only. Slow. |
-| `CUDNN_ATTENTION` | cuDNN's fused attention. | Available in recent PyTorch + cuDNN; sometimes the fastest path on Hopper. |
-
-The benchmark accepts `--sdpa-backend` for a quick A/B; usually `FLASH_ATTENTION` wins for video DiT at production resolutions (long sequences favor FA's tiled algorithm) and the others are within ±5%. The interesting thing isn't the win — it's verifying that **all backends produce identical output for the same seed** (sequence parallelism / quantized attention break this; SDPA backends don't).
 
 ## Deep dive: model offloading
 
