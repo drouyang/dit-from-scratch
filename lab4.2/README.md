@@ -275,6 +275,22 @@ A diffusion pipeline keeps three neural networks loaded on the GPU:
 
 `enable_sequential_cpu_offload()` cycles at a much **finer granularity** — individual submodules (per-block, per-Linear) move on and off GPU on demand. Over a full generation (60 transformer forwards × ~30 blocks each), that's thousands of small PCIe round-trips. Each transfer is fast, but the cumulative overhead dominates: ~107 extra seconds of wall clock for only ~2 GB additional VRAM savings (15.0 vs 17.0 GB). Steep trade-off — useful only when sequential offload is the *only* way the model fits (12 GB consumer card, or running two models concurrently on the same GPU).
 
+### Deep dive: model offloading
+
+`diffusers` ships two offload helpers — both wrappers around HuggingFace `accelerate`'s `cpu_offload_with_hook` / `AlignDevicesHook` machinery:
+
+```python
+pipe.enable_model_cpu_offload()       # whole-component cycling
+pipe.enable_sequential_cpu_offload()  # per-submodule cycling
+```
+
+| Helper | What it does | When to use |
+|---|---|---|
+| `enable_model_cpu_offload()` | Cycles *whole components* (VAE, text encoder, transformer) on and off the GPU; one is resident, the others sit on CPU. | Default for tight-VRAM rigs. Small latency cost (see results table). |
+| `enable_sequential_cpu_offload()` | Cycles individual *submodules* (per-block, per-Linear) on demand. | When even `enable_model_cpu_offload` OOMs. Steep latency cost — thousands of small PCIe round-trips per generation, no compute/transfer overlap. |
+
+Neither helper overlaps compute with PCIe transfer: the pre-forward hook moves weights GPU↔CPU synchronously, then the forward runs, then the post-forward hook moves them back. SGLang-Diffusion's `--dit-layerwise-offload` (lab 4.3) implements the prefetched, double-buffered version that hides the transfer behind compute.
+
 ## Files
 
 | File | What it is |
