@@ -268,14 +268,29 @@ def run_aot_load(args) -> Result:
     class _AOTWrapper:
         def __init__(self, loaded_module, ref_module):
             self._loaded = loaded_module
+            self._ref = ref_module                          # keep for attr fallback
             self.config = ref_module.config
             self.dtype = ref_module.dtype
             self.device = ref_module.device
+
         def __call__(self, **kwargs):
             out = self._loaded(kwargs["hidden_states"], kwargs["timestep"],
                                 kwargs["encoder_hidden_states"])
             return (out,) if kwargs.get("return_dict") is False else type(
                 "Out", (), {"sample": out})()
+
+        @contextmanager
+        def cache_context(self, name):
+            """WanPipeline calls pipe.transformer.cache_context(...) inside the
+            sampling loop for the Cache-DiT integration. AOT-loaded modules
+            don't have feature-caching state — make it a no-op."""
+            yield
+
+        def __getattr__(self, name):
+            # Fall back to the original transformer for any attribute the
+            # pipeline asks about that we don't explicitly handle.
+            return getattr(self._ref, name)
+
     pipe.transformer = _AOTWrapper(loaded, pipe.transformer)
     print(f"  model load: {fmt_secs(model_load_secs)}  (includes .pt2 load)")
 
