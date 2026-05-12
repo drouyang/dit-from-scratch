@@ -266,7 +266,7 @@ Expected, single 4090:
 | `--offload model` | 10.8 s | 78 s | 0.99× | 17.0 GB |
 | `--offload sequential` | TBD | TBD | TBD | TBD |
 
-**Why `--offload model` is essentially free here** (+1% latency, vs. the ~10–15% slowdown a stock pipeline would show).
+**Why `--offload model` is essentially free here** (+1% latency).
 
 A diffusion pipeline keeps three neural networks loaded on the GPU:
 
@@ -276,11 +276,7 @@ A diffusion pipeline keeps three neural networks loaded on the GPU:
 
 `enable_model_cpu_offload()`'s normal headline win is moving the text encoder to CPU as soon as it's done — that frees ~11 GB before sampling starts. **But this benchmark already does that manually**: `pipe.text_encoder.to("cpu")` runs right after `encode_prompt`, because without it `torch.compile` OOMs on a 24 GB 4090 (the compiled transformer + Inductor caches need every spare GB during sampling).
 
-So by the time `--offload model` activates, the ~11 GB text-encoder win is already baked into the baseline measurement. What's left for the helper to offload is just the transformer↔VAE swap at decode time: ~3 GB savings, sub-second cost. That's why we measure +1% slowdown / −17% VRAM — the *incremental* effect on top of the manually-offloaded baseline, not the offload helper's raw effect on a stock pipeline. **On a fresh pipeline with no manual offload, `enable_model_cpu_offload()` would buy you closer to ~50% VRAM reduction for ~10–15% slowdown** — that's the number you'd see in production code that doesn't already micromanage the text encoder.
-
-The trade-off shape still holds, just shifted. `--offload sequential` (per-layer instead of per-component) is where the slowdown gets steep.
-
-On a 4090 you don't need offload to fit (baseline is 20.5 GB on a 24 GB card), but the experiment is how you'd plan a deployment to a 12 GB card, or run two models concurrently on the same GPU.
+So by the time `--offload model` activates, the ~11 GB text-encoder win is already baked into the baseline measurement. What's left for the helper to offload is just the transformer↔VAE swap at decode time: ~3 GB savings, sub-second cost. That's why we measure +1% slowdown / −17% VRAM — the *incremental* effect on top of the manually-offloaded baseline, not the offload helper's raw effect on a stock pipeline.
 
 ## Deep dive: model offloading
 
@@ -306,16 +302,6 @@ pipe.enable_sequential_cpu_offload()  # more aggressive
 | `requirements.txt` | torch, diffusers, transformers, accelerate, imageio. |
 
 ## Discussion
-
-### What you've learned
-
-After this lab, you can read a diffusion model's forward pass and identify, without external tools:
-
-- Which parts compile cleanly under Inductor (most of the transformer); which don't (data-dependent control flow, dynamic shapes).
-- When a CUDA Graph optimization is going to break (any pipeline with two-pass CFG, batched generation, or per-step shape changes).
-- Whether to package as a `.pt2` (production, shippable) or stick with JIT compile (dev iteration).
-- Which SDPA backend the current PyTorch build is silently dispatching to.
-- Whether your rig has enough VRAM to skip offload (and what it'd cost you if not).
 
 ### What diffusers won't get you
 
