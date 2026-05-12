@@ -54,8 +54,7 @@ The benchmark scripts below activate the shared root `.venv` for their orchestra
 ```bash
 source .venv/bin/activate    # from repo root
 cd lab4.3
-python benchmark_baseline.py --prompt "a fluffy red panda eating bamboo on a tree branch"
-python benchmark_baseline.py --skip-diffusers     # if you already have lab 4.2's number
+python benchmark_baseline.py
 ```
 
 Compares stock diffusers (lab 4.2's baseline number) against `sglang serve`'s defaults. The win comes from FlashAttention-2 (auto-selected), hand-written QKV / SwiGLU / QK-norm fusions, and SGLang's scheduler overhead being lower than `WanPipeline.__call__`. If your sglang build uses a non-default HTTP route, override with `SGLANG_ENDPOINT=/your/path python benchmark_baseline.py`.

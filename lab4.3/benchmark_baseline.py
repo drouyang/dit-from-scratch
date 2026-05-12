@@ -23,8 +23,8 @@ If your sglang version uses a different HTTP route than the default below,
 override with: SGLANG_ENDPOINT=/your/path python benchmark_baseline.py
 
 Run:
-    python benchmark_baseline.py
-    python benchmark_baseline.py --skip-diffusers   # use lab 4.2's number
+    python benchmark_baseline.py                    # sglang row only; reuses lab 4.2's diffusers numbers
+    python benchmark_baseline.py --with-diffusers   # re-measure diffusers on this hardware too
 """
 
 import argparse
@@ -335,8 +335,8 @@ def main():
     p.add_argument("--guidance",   type=float, default=5.0)
     p.add_argument("--fps",        type=int,   default=16)
     p.add_argument("--seed",       type=int,   default=42)
-    p.add_argument("--skip-diffusers", action="store_true",
-                   help="Skip the diffusers row (use lab 4.2's number)")
+    p.add_argument("--with-diffusers", action="store_true",
+                   help="Also run the diffusers row (default: skipped — use lab 4.2's number)")
     p.add_argument("--negative-prompt", default="")
     args = p.parse_args()
 
@@ -349,7 +349,7 @@ def main():
           f"  steps={args.steps},  cfg={args.guidance},  seed={args.seed}")
 
     results: list[RunResult] = []
-    if not args.skip_diffusers:
+    if args.with_diffusers:
         results.append(run_diffusers(args))
     results.append(run_sglang(args))
 
@@ -361,9 +361,17 @@ def main():
     print(header)
     print("-" * len(header))
 
+    # If --with-diffusers, the in-process row is the baseline. Otherwise compare
+    # the sglang row against lab 4.2's measured single-4090 second-call number
+    # (5.8 s load, 77 s first, 77 s second, 20.5 GB peak) and label the row so
+    # the reader knows where the reference came from.
+    LAB42_REF_SECOND = 77.0
     baseline = next((r for r in results
                      if r.name == "diffusers" and not r.skipped
                      and math.isfinite(r.second_secs)), None)
+    if baseline is None:
+        print(f"{'diffusers (lab 4.2 ref)':<28} {'5.8s':>8} {'77.0s':>8} {'77.0s':>8} "
+              f"{'1.00×':>9} {'20.50 GB':>10}")
 
     for r in results:
         if r.skipped:
@@ -373,6 +381,8 @@ def main():
             speedup = f"{baseline.second_secs / r.second_secs:5.2f}×"
         elif baseline is not None and r is baseline:
             speedup = "1.00×"
+        elif math.isfinite(r.second_secs):
+            speedup = f"{LAB42_REF_SECOND / r.second_secs:5.2f}×"
         else:
             speedup = ""
         print(f"{r.name:<28} {fmt_secs(r.load_secs):>8} {fmt_secs(r.first_secs):>8} "
