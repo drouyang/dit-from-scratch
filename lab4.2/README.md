@@ -226,9 +226,9 @@ Expected, single 4090:
 | config | model load | second call | speedup | peak VRAM |
 |---|---|---|---|---|
 | baseline (auto) | 5.8 s | 77 s | 1× | 20.5 GB |
-| `--sdpa-backend flash` | 5.7 s | 77 s | 1.00× (confirms auto picks flash) | 20.5 GB |
-| `--sdpa-backend efficient` | TBD | TBD | ~0.98× (expected) | TBD |
-| `--sdpa-backend cudnn` | TBD | TBD | ~1.02× (expected, sometimes a small Hopper-only win) | TBD |
+| `--sdpa-backend flash` | 5.7 s | 77 s | 1.00× | 20.5 GB |
+| `--sdpa-backend efficient` | TBD | TBD | ~0.98× | TBD |
+| `--sdpa-backend cudnn` | TBD | TBD | ~1.02× | TBD |
 
 Differences are usually within ±5%. The interesting check is that *all backends produce identical output for the same seed* — they're mathematically equivalent. (SageAttention in lab 4.3 is *not* mathematically equivalent and produces visually-similar-but-not-identical frames; SDPA backends do.)
 
@@ -275,8 +275,8 @@ Expected, single 4090:
 | config | model load | second call | peak VRAM | use case |
 |---|---|---|---|---|
 | baseline | 5.8 s | 77 s | 20.5 GB | 24 GB+ card |
-| `--offload model` | 10.9 s | 78 s (+1%) | 17.0 GB (−17%) | 20 GB card |
-| `--offload sequential` | TBD | TBD (+120% expected) | TBD (much lower peak) | 12 GB consumer card |
+| `--offload model` | 10.9 s | 78 s | 17.0 GB | 20 GB card |
+| `--offload sequential` | TBD | TBD | TBD | 12 GB consumer card |
 
 **Why `--offload model` is essentially free here** (+1% latency vs the ~10–15% you'd expect). The benchmark already does its own manual text-encoder offload (`pipe.text_encoder.to("cpu")` after `encode_prompt`) to avoid an OOM during torch.compile. That's the *expensive* offload — umT5-XXL is ~11 GB. By the time `--offload model` engages, the only remaining cycle work is the transformer ↔ VAE handoff, which is tiny (~3 GB savings, sub-second wall cost). So our measured "+1% slowdown / −17% VRAM" reflects baseline-minus-text-encoder-offload, not raw `enable_model_cpu_offload()`. The trade-off shape still holds — just shifted: each *additional* level of offload costs roughly an order of magnitude more in latency for the next chunk of VRAM. The `--offload sequential` row (per-submodule offload) is where the steep slowdown kicks in.
 
