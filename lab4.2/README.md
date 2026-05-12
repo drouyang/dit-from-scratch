@@ -156,9 +156,9 @@ Expected, single 4090:
 |---|---|---|---|---|
 | baseline | 5.8 s | 77 s | 77 s | 20.5 GB |
 | `--compile default` (JIT) | 6.3 s | 119 s | 62 s | 20.5 GB |
-| `--aot load` | TBD | TBD | TBD | TBD |
+| `--aot load` | 5.8 s | 62 s | 62 s | 20.5 GB |
 
-`--aot load` should save the JIT-compile portion of cold start *and* skip part of `from_pretrained` (transformer loads from `.pt2` instead). For serverless / autoscaling deploys where every container restart re-pays cold-start cost, this is the big win.
+The headline: **AOT's first call (62 s) matches its second call (62 s)**, while JIT's first call (119 s) pays a ~57 s compile tax. AOT moves that compile work to `--aot save` (one-time, ahead-of-time), and `--aot load` deserializes the already-compiled `.pt2` — the next process's first call runs at full steady-state speed immediately. For serverless / autoscaling deploys where every container restart re-pays cold-start cost, this is the big win.
 
 > **Caveat**: AOTInductor's API has moved between PyTorch versions. If `--aot save` fails with an `AttributeError` on `torch._inductor.aoti_compile_and_package`, your PyTorch is newer or older than the script targets — check [PyTorch's AOTI tutorial](https://pytorch.org/tutorials/recipes/torch_export_aoti_python.html) for the current call signature.
 

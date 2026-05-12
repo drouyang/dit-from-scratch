@@ -39,6 +39,13 @@ warnings.filterwarnings(
     "ignore",
     message=r".*sending unauthenticated requests.*",
 )
+# PyTorch pytree internals still call the deprecated isinstance(treespec,
+# LeafSpec) pattern from inside copyreg/pickle paths.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*`isinstance\(treespec, LeafSpec\)` is deprecated.*",
+    category=FutureWarning,
+)
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 # torchao import nag is emitted via diffusers' own logger (logger.warning),
 # not warnings.warn, so the regex filter above doesn't catch it. Lower the
