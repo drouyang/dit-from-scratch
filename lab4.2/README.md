@@ -266,7 +266,9 @@ Expected, single 4090:
 | `--offload model` | 10.8 s | 78 s | 0.99× | 17.0 GB |
 | `--offload sequential` | 11.0 s | 185 s | 0.42× | 15.0 GB |
 
-**Why the two offload modes differ so much** (`--offload model`: ~free / −17% VRAM; `--offload sequential`: 2.4× slower / −27% VRAM).
+**Why model load roughly doubles with either offload helper** (5.8 s → ~11 s). `build_pipeline()` does `WanPipeline.from_pretrained(...).to("cuda")` first, so all components land on GPU. Then `enable_*_cpu_offload()` walks the pipeline and pushes every component back to CPU so the offload-aware execution order can start from a known state — that's a ~13 GB GPU→CPU memcpy that the baseline doesn't pay. On top of that, the helper registers `AlignDevicesHook` forward pre/post hooks on every `nn.Module` (per *submodule* for sequential — the whole transformer tree, not just the top-level components). Bookkeeping, not compute, but adds up. The two modes pay similar setup cost because the dominant chunk is the same GPU→CPU bounce.
+
+**Why the two offload modes differ so much at inference time** (`--offload model`: ~free / −17% VRAM; `--offload sequential`: 2.4× slower / −27% VRAM).
 
 A diffusion pipeline keeps three neural networks loaded on the GPU:
 
