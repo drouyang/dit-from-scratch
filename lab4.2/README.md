@@ -130,11 +130,10 @@ You pay the compile tax once per process. After that, every call is faster.
 # One-time export (slow — warms compile, then packages):
 python benchmark.py --aot save                # writes wan_transformer.pt2
 
-# Now A/B the cold-start path against JIT compile. Use a fresh Inductor
-# cache for the JIT row so its first-call number reflects true cold
-# compile, not a warm-cache replay:
-TORCHINDUCTOR_CACHE_DIR=$(mktemp -d) python benchmark.py --compile default   # JIT: first call pays full compile
-python benchmark.py --aot load                # AOT: first call skips compile entirely
+# Then measure the AOT cold-start path:
+python benchmark.py --aot load                # first call skips compile entirely
+# (The --compile default row in the table below is the same measurement
+# from Experiment 1 — no need to re-run.)
 ```
 
 Key APIs — export (write `.pt2`), then load (skip JIT on next process start):
