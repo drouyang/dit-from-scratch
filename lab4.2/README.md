@@ -221,28 +221,12 @@ python benchmark.py --sdpa-backend efficient  # xFormers-style memory-efficient
 python benchmark.py --sdpa-backend cudnn      # cuDNN's fused attention
 ```
 
-Key API (`benchmark.py:94–102`) — the CLI flag selects an `SDPBackend` and wraps the `pipe(...)` call in a `sdpa_kernel(...)` context manager that restricts dispatch:
-
-```python
-from torch.nn.attention import SDPBackend, sdpa_kernel
-backend = {
-    "flash":     SDPBackend.FLASH_ATTENTION,
-    "efficient": SDPBackend.EFFICIENT_ATTENTION,
-    "cudnn":     SDPBackend.CUDNN_ATTENTION,
-    "math":      SDPBackend.MATH,
-}[args.sdpa_backend]
-with sdpa_kernel(backend):
-    output = pipe(...)
-```
-
-What you're measuring: which attention kernel PyTorch's SDPA dispatcher is *actually* picking, and whether forcing a specific one wins. Stock PyTorch on Ampere+ already auto-dispatches to `flash` — this experiment is mostly *verifying* the default and seeing the small spread between alternatives.
-
 Expected, single 4090:
 
 | config | model load | second call | speedup | peak VRAM |
 |---|---|---|---|---|
 | baseline (auto) | 5.8 s | 77 s | 1× | 20.5 GB |
-| `--sdpa-backend flash` | TBD | TBD | ~1× (expected — already what auto picks) | TBD |
+| `--sdpa-backend flash` | 5.7 s | 77 s | 1.00× (confirms auto picks flash) | 20.5 GB |
 | `--sdpa-backend efficient` | TBD | TBD | ~0.98× (expected) | TBD |
 | `--sdpa-backend cudnn` | TBD | TBD | ~1.02× (expected, sometimes a small Hopper-only win) | TBD |
 
