@@ -276,8 +276,21 @@ def run_aot_load(args) -> Result:
         def __call__(self, **kwargs):
             out = self._loaded(kwargs["hidden_states"], kwargs["timestep"],
                                 kwargs["encoder_hidden_states"])
-            return (out,) if kwargs.get("return_dict") is False else type(
-                "Out", (), {"sample": out})()
+            # The AOT-loaded callable preserves whatever the *original* forward
+            # returned at export time. WanTransformer3DModel returns a
+            # Transformer2DModelOutput dataclass by default (because the
+            # default `return_dict=True` couldn't be overridden in the
+            # torch.export.export args=... tuple). Unpack to the raw tensor
+            # so the pipeline's CFG subtraction `noise_pred - noise_uncond`
+            # operates on tensors, not dataclasses.
+            if hasattr(out, "sample"):
+                out = out.sample
+            elif isinstance(out, (tuple, list)):
+                out = out[0]
+            if kwargs.get("return_dict") is False:
+                return (out,)
+            from diffusers.models.modeling_outputs import Transformer2DModelOutput
+            return Transformer2DModelOutput(sample=out)
 
         @contextmanager
         def cache_context(self, name):
