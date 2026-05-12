@@ -263,10 +263,22 @@ Expected, single 4090:
 | config | model load | second call | speedup | peak VRAM |
 |---|---|---|---|---|
 | baseline | 5.8 s | 77 s | 1× | 20.5 GB |
-| `--offload model` | 10.9 s | 78 s | 0.99× | 17.0 GB |
+| `--offload model` | 10.8 s | 78 s | 0.99× | 17.0 GB |
 | `--offload sequential` | TBD | TBD | TBD | TBD |
 
-**Why `--offload model` is essentially free here** (+1% latency vs the ~10–15% you'd expect). The benchmark already does its own manual text-encoder offload (`pipe.text_encoder.to("cpu")` after `encode_prompt`) to avoid an OOM during torch.compile. That's the *expensive* offload — umT5-XXL is ~11 GB. By the time `--offload model` engages, the only remaining cycle work is the transformer ↔ VAE handoff, which is tiny (~3 GB savings, sub-second wall cost). So our measured "+1% slowdown / −17% VRAM" reflects baseline-minus-text-encoder-offload, not raw `enable_model_cpu_offload()`. The trade-off shape still holds — just shifted: each *additional* level of offload costs roughly an order of magnitude more in latency for the next chunk of VRAM. The `--offload sequential` row (per-submodule offload) is where the steep slowdown kicks in.
+**Why `--offload model` is essentially free here** (+1% latency, vs. the ~10–15% slowdown a stock pipeline would show).
+
+A diffusion pipeline keeps three neural networks loaded on the GPU:
+
+- **Text encoder** — turns the prompt into embeddings *once* at the start of generation, then sits idle. WAN uses **umT5-XXL** (a 13B-parameter T5 variant), which weighs in at ~11 GB.
+- **Transformer (the DiT)** — the main model, runs once per sampling step (30 steps × 2 for CFG = 60 forward passes).
+- **VAE** — decodes the final latent into pixel frames *once* at the end.
+
+`enable_model_cpu_offload()`'s normal headline win is moving the text encoder to CPU as soon as it's done — that frees ~11 GB before sampling starts. **But this benchmark already does that manually**: `pipe.text_encoder.to("cpu")` runs right after `encode_prompt`, because without it `torch.compile` OOMs on a 24 GB 4090 (the compiled transformer + Inductor caches need every spare GB during sampling).
+
+So by the time `--offload model` activates, the ~11 GB text-encoder win is already baked into the baseline measurement. What's left for the helper to offload is just the transformer↔VAE swap at decode time: ~3 GB savings, sub-second cost. That's why we measure +1% slowdown / −17% VRAM — the *incremental* effect on top of the manually-offloaded baseline, not the offload helper's raw effect on a stock pipeline. **On a fresh pipeline with no manual offload, `enable_model_cpu_offload()` would buy you closer to ~50% VRAM reduction for ~10–15% slowdown** — that's the number you'd see in production code that doesn't already micromanage the text encoder.
+
+The trade-off shape still holds, just shifted. `--offload sequential` (per-layer instead of per-component) is where the slowdown gets steep.
 
 On a 4090 you don't need offload to fit (baseline is 20.5 GB on a 24 GB card), but the experiment is how you'd plan a deployment to a 12 GB card, or run two models concurrently on the same GPU.
 
