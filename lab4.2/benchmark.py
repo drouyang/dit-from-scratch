@@ -47,6 +47,9 @@ warnings.filterwarnings(
 warnings.filterwarnings("ignore", message=r".*Unable to import `torchao` Tensor objects.*")
 warnings.filterwarnings("ignore", message=r".*local_dir_use_symlinks.*")
 warnings.filterwarnings("ignore", message=r".*sending unauthenticated requests.*")
+# PyTorch pytree internals still call the deprecated isinstance(treespec, LeafSpec)
+# pattern from inside copyreg/pickle paths; fires during AOT load.
+warnings.filterwarnings("ignore", message=r".*`isinstance\(treespec, LeafSpec\)` is deprecated.*", category=FutureWarning)
 logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 logging.getLogger("diffusers").setLevel(logging.ERROR)
 
@@ -244,23 +247,14 @@ def run_aot_save(args) -> Result:
 def run_aot_load(args) -> Result:
     """Load a previously-exported .pt2 and run two inferences. Compares
     first-call latency (the AOT win) against steady-state (matches JIT)."""
-    from diffusers import AutoencoderKLWan, WanPipeline
     from diffusers.utils import export_to_video
 
     print(f"\n=== --aot load  ({args.aot_path}) ===")
-    t0 = time.time()
-    vae = AutoencoderKLWan.from_pretrained(WAN_REPO, subfolder="vae", torch_dtype=torch.float32)
-    pipe = WanPipeline.from_pretrained(WAN_REPO, vae=vae, torch_dtype=torch.bfloat16).to("cuda")
-    pipe.vae.enable_tiling()
-    prompt_embeds, neg_embeds = pipe.encode_prompt(
-        prompt=args.prompt,
-        negative_prompt=args.negative_prompt or "",
-        do_classifier_free_guidance=True,
-        num_videos_per_prompt=1,
-        device=torch.device("cuda"),
-    )
-    pipe.text_encoder.to("cpu")
-    torch.cuda.empty_cache()
+    # Reuse build_pipeline so the text_encoder=None handling stays in one
+    # place. AOT load doesn't compile the transformer (the .pt2 already is
+    # the compiled artifact), so force --compile=none for build_pipeline.
+    args_for_build = argparse.Namespace(**{**vars(args), "compile": "none"})
+    pipe, prompt_embeds, neg_embeds, model_load_secs = build_pipeline(args_for_build)
 
     # Load the AOT package and swap into the pipeline's transformer slot.
     # The loaded callable mimics transformer.__call__ but skips JIT compile.
@@ -283,8 +277,6 @@ def run_aot_load(args) -> Result:
             return (out,) if kwargs.get("return_dict") is False else type(
                 "Out", (), {"sample": out})()
     pipe.transformer = _AOTWrapper(loaded, pipe.transformer)
-
-    model_load_secs = time.time() - t0
     print(f"  model load: {fmt_secs(model_load_secs)}  (includes .pt2 load)")
 
     torch.cuda.reset_peak_memory_stats()
