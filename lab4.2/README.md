@@ -8,6 +8,19 @@
 
 **Compute**: this lab is **single-GPU-friendly**. A 4090 / A100 / H100 is enough for everything below. (Multi-GPU sequence parallelism + tensor parallelism live in lab 4.3, which is where 4× 4090 starts to matter.)
 
+## Contents
+
+- [Acceleration over lab 4.1](#acceleration-over-lab-41)
+- [Setup](#setup)
+- [Run the benchmarks](#run-the-benchmarks)
+  - [Baseline](#baseline)
+  - [Experiment 1 — `torch.compile` modes](#experiment-1--torchcompile-modes)
+  - [Experiment 2 — AOT cold-start vs JIT](#experiment-2--aot-cold-start-vs-jit) · [Deep dive: AOT compilation](#deep-dive-aot-compilation-torchexport--aotinductor)
+  - [Experiment 3 — SDPA backend](#experiment-3--sdpa-backend) · [Deep dive: SDPA backend selection](#deep-dive-sdpa-backend-selection)
+  - [Experiment 4 — Offload trade-off](#experiment-4--offload-trade-off) · [Deep dive: model offloading](#deep-dive-model-offloading)
+- [Files](#files)
+- [Discussion](#discussion)
+
 ## Acceleration over lab 4.1
 
 Lab 4.1 ran `WanPipeline.from_pretrained(...).__call__(...)` directly. On a recent CUDA + PyTorch build that already gives you:
