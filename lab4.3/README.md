@@ -14,8 +14,6 @@ Each is a flag on `sglang generate`. The lab teaches what each does, what it cos
 
 ## Acceleration over lab 4.2
 
-Lab 4.2 demonstrated that vanilla PyTorch + `torch.compile` gets you ~1.6–1.9× over stock `diffusers`. What's left on the table that a production engine adds:
-
 | Category | What `torch.compile` can do | What SGLang adds |
 |---|---|---|
 | Attention kernel | FlashAttention 2 via SDPA | FlashAttention 3, SageAttention (INT8), FlashInfer RoPE — externally-built hand-written kernels |
