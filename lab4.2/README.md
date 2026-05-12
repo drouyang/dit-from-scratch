@@ -101,8 +101,8 @@ Expected, single 4090:
 
 | config | model load | first call | second call | speedup (second) | peak VRAM |
 |---|---|---|---|---|---|
-| baseline | **5.8 s** | **77 s** | **77 s** | 1× | **20.5 GB** |
-| `--compile default` | **6.3 s** | **119 s** | **62 s** | **1.24×** | **20.5 GB** |
+| baseline | 5.8 s | 77 s | 77 s | 1× | 20.5 GB |
+| `--compile default` | 6.3 s | 119 s | 62 s | 1.24× | 20.5 GB |
 | `--compile max-autotune-no-cudagraphs` | TBD | TBD | TBD | TBD | TBD |
 
 Second-call latency is the production-relevant number (steady-state). First-call latency is what you'd pay every cold start without AOT.
@@ -153,8 +153,8 @@ Expected, single 4090:
 
 | config | model load | first call | second call | peak VRAM |
 |---|---|---|---|---|
-| baseline | **5.8 s** | **77 s** | **77 s** | **20.5 GB** |
-| `--compile default` (JIT) | **6.3 s** | **119 s** | **62 s** | **20.5 GB** |
+| baseline | 5.8 s | 77 s | 77 s | 20.5 GB |
+| `--compile default` (JIT) | 6.3 s | 119 s | 62 s | 20.5 GB |
 | `--aot load` | TBD | TBD | TBD | TBD |
 
 `--aot load` should save the JIT-compile portion of cold start *and* skip part of `from_pretrained` (transformer loads from `.pt2` instead). For serverless / autoscaling deploys where every container restart re-pays cold-start cost, this is the big win.
@@ -189,7 +189,7 @@ Expected, single 4090:
 
 | config | model load | second call | speedup | peak VRAM |
 |---|---|---|---|---|
-| baseline (auto) | **5.8 s** | **77 s** | 1× | **20.5 GB** |
+| baseline (auto) | 5.8 s | 77 s | 1× | 20.5 GB |
 | `--sdpa-backend flash` | TBD | TBD | ~1× (expected — already what auto picks) | TBD |
 | `--sdpa-backend efficient` | TBD | TBD | ~0.98× (expected) | TBD |
 | `--sdpa-backend cudnn` | TBD | TBD | ~1.02× (expected, sometimes a small Hopper-only win) | TBD |
@@ -218,8 +218,8 @@ Expected, single 4090:
 
 | config | model load | second call | peak VRAM | use case |
 |---|---|---|---|---|
-| baseline | **5.8 s** | **77 s** | **20.5 GB** | 24 GB+ card |
-| `--offload model` | **10.9 s** | **78 s** (+1%) | **17.0 GB** (−17%) | 20 GB card |
+| baseline | 5.8 s | 77 s | 20.5 GB | 24 GB+ card |
+| `--offload model` | 10.9 s | 78 s (+1%) | 17.0 GB (−17%) | 20 GB card |
 | `--offload sequential` | TBD | TBD (+120% expected) | TBD (much lower peak) | 12 GB consumer card |
 
 **Why `--offload model` is essentially free here** (+1% latency vs the ~10–15% you'd expect). The benchmark already does its own manual text-encoder offload (`pipe.text_encoder.to("cpu")` after `encode_prompt`) to avoid an OOM during torch.compile. That's the *expensive* offload — umT5-XXL is ~11 GB. By the time `--offload model` engages, the only remaining cycle work is the transformer ↔ VAE handoff, which is tiny (~3 GB savings, sub-second wall cost). So our measured "+1% slowdown / −17% VRAM" reflects baseline-minus-text-encoder-offload, not raw `enable_model_cpu_offload()`. The trade-off shape still holds — just shifted: each *additional* level of offload costs roughly an order of magnitude more in latency for the next chunk of VRAM. The `--offload sequential` row (per-submodule offload) is where the steep slowdown kicks in.
