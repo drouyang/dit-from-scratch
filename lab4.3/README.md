@@ -27,13 +27,6 @@ The pattern: SGLang is the *orchestration runtime*. Most of its wins come from c
 
 This lab needs **one isolated venv** at `lab4.3/.venv-sglang/`. SGLang ships compiled CUDA kernels (`flashinfer-cubin`, `sgl-kernel`) pinned to a specific torch ABI; installing it into the shared root `.venv` would replace torch/cuDNN and break the diffusers path you spent labs 1.x–4.2 setting up. Keep sglang in its own venv.
 
-```
-dit-from-scratch/
-├── .venv/                 ← shared root venv (labs 1.x–4.6 diffusers)
-└── lab4.3/
-    └── .venv-sglang/      ← only sglang lives here
-```
-
 ```bash
 # From the repo root, create the isolated sglang venv. uv is recommended
 # (the install needs --prerelease=allow, which pip doesn't support as a flag):
